@@ -1,14 +1,13 @@
 import os
 import shutil
-import sys
 import psycopg2
 from psycopg2 import Error
 from datetime import date
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from Main import PantallaPrincipal
 from tkcalendar import DateEntry
 from PIL import Image, ImageTk
-from cargo import VentanaCargo  # importa la clase de cargo.py
 
 # ------ CONFIGURACIÓN BASE DE DATOS -----
 DB_CONFIG = {
@@ -21,27 +20,8 @@ DB_CONFIG = {
 
 UPLOADS_DIR = "uploads"
 CONTRACT_TYPES = ["Permanente", "Especial", "Jornal"]
-
-# ---------- NUEVAS FUNCIONES PARA CARGAR LISTAS DESDE LA BD ----------
-def obtener_lista(tabla):
-    """Obtiene los nombres desde la tabla especificada."""
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        cur.execute(f"SELECT nombre FROM {tabla} ORDER BY nombre;")
-        resultados = cur.fetchall()
-        lista = [fila[0] for fila in resultados]
-        cur.close()
-        conn.close()
-        return lista if lista else ["Sin datos"]
-    except Exception as e:
-        print(f"Error al obtener datos de {tabla}: {e}")
-        return ["Sin datos"]
-
-DEPENDENCIAS = obtener_lista("dependencias")
-CARGOS = obtener_lista("cargos")
-
-# ------------------------------------------------------
+DEPENDENCIAS = ["Administración", "Finanzas", "Recursos Humanos", "Sistemas"]
+CARGOS = ["Gerente", "Analista", "Asistente", "Técnico"]
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
@@ -166,8 +146,7 @@ def guardar_empleado(*args):
     finally:
         conn.close()
 
-
-# === INTERFAZ MODERNA ===
+# --- INTERFAZ ---
 class App:
     def __init__(self, root, usuario_actual=None):
         self.root = root
@@ -175,26 +154,6 @@ class App:
         root.title("UMAP - Crear Empleado")
         root.state("zoomed")
         root.configure(bg="#f4f6f9")
-        root.update_idletasks()  # --- evita pantalla en blanco al iniciar ---
-
-        # --- Colores y estilos modernos ---
-        self.BG = "#f4f6f9"
-        self.FRAME_BG = "#ffffff"
-        self.LABEL_BG = "#f4f6f9"
-        self.LABEL_FG = "#2c3e50"
-        self.ENTRY_BG = "#ecf0f1"
-        self.BUTTON_BG = "#3498db"
-        self.BUTTON_FG = "white"
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TLabel", background=self.LABEL_BG, foreground=self.LABEL_FG, font=("Segoe UI", 9))
-        style.configure("TFrame", background=self.BG)
-        style.configure("TLabelFrame", background=self.FRAME_BG, foreground=self.LABEL_FG, font=("Segoe UI", 10, "bold"))
-        style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=4)
-        style.map("TButton", background=[("active", "#2980b9")], foreground=[("active", "white")])
-        style.configure("TEntry", padding=2)
-        style.configure("TCombobox", padding=2)
 
         # Variables
         self.identidad = tk.StringVar()
@@ -221,41 +180,159 @@ class App:
         self.cv_src = self.contrato_src = self.solvencia_src = self.id_src = self.foto_src = None
         self.foto_path = None
 
-        # --- Título centrado ---
-        ttk.Label(root, text="Registro de Nuevo Empleado", font=("Segoe UI", 14, "bold"), background=self.BG).pack(pady=10)
+        # Estilo general
+        style = ttk.Style()
+        style.configure("TLabel", font=("Segoe UI", 9))
+        style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=4)
+        style.configure("TEntry", padding=2)
 
-        container = ttk.Frame(root, padding=10, style="TFrame")
+        # Título centrado
+        ttk.Label(root, text="Registro de Nuevo Empleado", font=("Segoe UI", 14, "bold"), background="#f4f6f9").pack(pady=10)
+
+        container = ttk.Frame(root, padding=10)
         container.pack(fill="both", expand=True)
+        container.grid_columnconfigure(0, weight=1)
 
         # --- Datos Personales ---
-        datos = ttk.LabelFrame(container, text="Datos Personales", padding=10, style="TLabelFrame")
-        datos.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
+        datos = ttk.LabelFrame(container, text="Datos Personales", padding=5)
+        datos.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        for i in range(5):
+            datos.grid_rowconfigure(i, weight=1)
+        for j in range(5):
+            datos.grid_columnconfigure(j, weight=1)
 
         # Foto
-        self.foto_frame = tk.Frame(datos, width=150, height=150, bg="#ecf0f1", relief="ridge", bd=2)
-        self.foto_frame.grid(row=0, column=0, rowspan=5, padx=5, pady=5)
+        self.foto_frame = tk.Frame(datos, width=150, height=150, bg="#e0e0e0", relief="ridge", bd=2)
+        self.foto_frame.grid(row=0, column=0, rowspan=5, padx=5, pady=5, sticky="nsew")
         self.foto_frame.grid_propagate(False)
-        self.foto_label = tk.Label(self.foto_frame, text="📷 Seleccionar Foto", bg="#ecf0f1", fg="gray")
+        self.foto_label = tk.Label(self.foto_frame, text="📷 Seleccionar Foto", bg="#e0e0e0", fg="gray")
         self.foto_label.place(relx=0.5, rely=0.5, anchor="center")
         self.foto_label.bind("<Button-1>", self.seleccionar_foto)
         self.foto_frame.bind("<Button-1>", self.seleccionar_foto)
 
-        # --- Dependencias y cargos con datos desde BD ---
-        contrato = ttk.LabelFrame(container, text="Información del Contrato", padding=10, style="TLabelFrame")
-        contrato.grid(row=1, column=0, sticky="nw", padx=5, pady=5)
-        
-        ttk.Label(contrato, text="Tipo de Contrato").grid(row=0, column=0, sticky="w", padx=5, pady=3)
+        # Identidad
+        ttk.Label(datos, text="Identidad").grid(row=0, column=1, sticky="ew", padx=5, pady=3)
+        ttk.Entry(datos, textvariable=self.identidad, width=25).grid(row=0, column=2, sticky="ew", padx=5, pady=3)
+
+        # Fecha nacimiento
+        ttk.Label(datos, text="Fecha Nacimiento").grid(row=0, column=3, sticky="ew", padx=5, pady=3)
+        self.fecha_nac_entry = DateEntry(datos, date_pattern="yyyy-mm-dd", width=12)
+        self.fecha_nac_entry.grid(row=0, column=4, sticky="ew", padx=5, pady=3)
+
+        # Nombres y apellidos
+        ttk.Label(datos, text="Primer Nombre").grid(row=1, column=1, sticky="ew", padx=5, pady=3)
+        ttk.Entry(datos, textvariable=self.nombre1, width=20).grid(row=1, column=2, sticky="ew", padx=5, pady=3)
+        ttk.Label(datos, text="Segundo Nombre").grid(row=1, column=3, sticky="ew", padx=5, pady=3)
+        ttk.Entry(datos, textvariable=self.nombre2, width=20).grid(row=1,column=4, sticky="ew", padx=5, pady=3)
+
+        ttk.Label(datos, text="Primer Apellido").grid(row=2, column=1, sticky="ew", padx=5, pady=3)
+        ttk.Entry(datos, textvariable=self.apellido1, width=20).grid(row=2, column=2, sticky="ew", padx=5, pady=3)
+        ttk.Label(datos, text="Segundo Apellido").grid(row=2, column=3, sticky="ew", padx=5, pady=3)
+        ttk.Entry(datos, textvariable=self.apellido2, width=20).grid(row=2, column=4, sticky="ew", padx=5, pady=3)
+
+        # Teléfono y Profesión
+        ttk.Label(datos, text="Teléfono").grid(row=3, column=1, sticky="ew", padx=5, pady=3)
+        ttk.Entry(datos, textvariable=self.telefono, width=20).grid(row=3, column=2, sticky="ew", padx=5, pady=3)
+        ttk.Label(datos, text="Profesión").grid(row=3, column=3, sticky="ew", padx=5, pady=3)
+        ttk.Entry(datos, textvariable=self.profesion, width=20).grid(row=3, column=4, sticky="ew", padx=5, pady=3)
+
+        # Dirección
+        ttk.Label(datos, text="Dirección").grid(row=4, column=1, sticky="ew", padx=5, pady=3)
+        ttk.Entry(datos, textvariable=self.direccion, width=20).grid(row=4, column=2, sticky="ew", padx=5, pady=3)
+
+        # --- Información del contrato ---
+        contrato = ttk.LabelFrame(container, text="Información del Contrato", padding=5)
+        contrato.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        for i in range(5):
+            contrato.grid_rowconfigure(i, weight=1)
+        for j in range(4):
+            contrato.grid_columnconfigure(j, weight=1)
+
+        ttk.Label(contrato, text="Tipo de Contrato").grid(row=0, column=0, sticky="ew", padx=5, pady=3)
         tipo_cb = ttk.Combobox(contrato, values=CONTRACT_TYPES, textvariable=self.tipo_contrato, width=20, state="readonly")
-        tipo_cb.grid(row=0, column=1, sticky="w", padx=5, pady=3)
+        tipo_cb.grid(row=0, column=1, sticky="ew", padx=5, pady=3)
         tipo_cb.bind("<<ComboboxSelected>>", self.tipo_cambio)
 
-        ttk.Label(contrato, text="Dependencia").grid(row=1, column=0, sticky="w", padx=5, pady=3)
-        ttk.Combobox(contrato, values=DEPENDENCIAS, textvariable=self.dependencia, width=20, state="readonly").grid(row=1, column=1, sticky="w", padx=5, pady=3)
+        ttk.Label(contrato, text="Dependencia").grid(row=1, column=0, sticky="ew", padx=5, pady=3)
+        ttk.Combobox(contrato, values=DEPENDENCIAS, textvariable=self.dependencia, width=20, state="readonly").grid(row=1, column=1, sticky="ew", padx=5, pady=3)
 
-        ttk.Label(contrato, text="Cargo").grid(row=1, column=2, sticky="w", padx=5, pady=3)
-        ttk.Combobox(contrato, values=CARGOS, textvariable=self.cargo, width=20, state="readonly").grid(row=1, column=3, sticky="w", padx=5, pady=3)
+        ttk.Label(contrato, text="Cargo").grid(row=1, column=2, sticky="ew", padx=5, pady=3)
+        ttk.Combobox(contrato, values=CARGOS, textvariable=self.cargo, width=20, state="readonly").grid(row=1, column=3, sticky="ew", padx=5, pady=3)
 
-        init_db()  # asegúrate de crear tabla empleados al iniciar
+        ttk.Label(contrato, text="Fecha Inicio").grid(row=2, column=0, sticky="ew", padx=5, pady=3)
+        self.fecha_inicio = DateEntry(contrato, date_pattern="yyyy-mm-dd", width=12)
+        self.fecha_inicio.grid(row=2, column=1, sticky="ew", padx=5, pady=3)
+
+        ttk.Label(contrato, text="Fecha Finalización").grid(row=2, column=2, sticky="ew", padx=5, pady=3)
+        self.fecha_fin = DateEntry(contrato, date_pattern="yyyy-mm-dd", width=12)
+        self.fecha_fin.grid(row=2, column=3, sticky="ew", padx=5, pady=3)
+        self.fecha_inicio.bind("<<DateEntrySelected>>", self.actualizar_dias)
+        self.fecha_fin.bind("<<DateEntrySelected>>", self.actualizar_dias)
+
+        ttk.Label(contrato, text="Sueldo (Lps)").grid(row=3, column=0, sticky="ew", padx=5, pady=3)
+        ttk.Entry(contrato, textvariable=self.sueldo, width=15).grid(row=3, column=1, sticky="ew", padx=5, pady=3)
+
+        ttk.Label(contrato, text="Años de Servicio").grid(row=3, column=2, sticky="ew", padx=5, pady=3)
+        self.anios_entry = ttk.Entry(contrato, textvariable=self.anioss, width=15)
+        self.anios_entry.grid(row=3, column=3, sticky="ew", padx=5, pady=3)
+
+        ttk.Label(contrato, text="Días trabajo").grid(row=4, column=0, sticky="ew", padx=5, pady=3)
+        self.dias_entry = ttk.Entry(contrato, textvariable=self.diasg, width=15)
+        self.dias_entry.grid(row=4, column=1, sticky="ew", padx=5, pady=3)
+
+        ttk.Label(contrato, text="Días a Gozar").grid(row=4, column=2, sticky="ew", padx=5, pady=3)
+        self.dias_entry = ttk.Entry(contrato, textvariable=self.diasg, width=15)
+        self.dias_entry.grid(row=4, column=3, sticky="ew", padx=5, pady=3)
+
+        # --- Cuenta de usuario ---
+        usuario_frame = ttk.LabelFrame(container, text="Cuenta de Usuario", padding=5)
+        usuario_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        for i in range(3):
+            usuario_frame.grid_rowconfigure(i, weight=1)
+        for j in range(4):
+            usuario_frame.grid_columnconfigure(j, weight=1)
+
+        ttk.Label(usuario_frame, text="Usuario").grid(row=0, column=0, sticky="ew", padx=5, pady=3)
+        ttk.Entry(usuario_frame, textvariable=self.usuario, width=20).grid(row=0, column=1, sticky="ew", padx=5, pady=3)
+
+        ttk.Label(usuario_frame, text="Contraseña").grid(row=1, column=0, sticky="ew", padx=5, pady=3)
+        self.pass_entry = ttk.Entry(usuario_frame, textvariable=self.contrasena, show="*", width=20)
+        self.pass_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=3)
+
+        ttk.Label(usuario_frame, text="Confirmar Contraseña").grid(row=1, column=2, sticky="ew", padx=5, pady=3)
+        self.pass2_entry = ttk.Entry(usuario_frame, textvariable=self.contrasena2, show="*", width=20)
+        self.pass2_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=3)
+
+        self.pass_error = tk.Label(usuario_frame, text="", fg="red", font=("Segoe UI", 8))
+        self.pass_error.grid(row=2, column=1, columnspan=2, sticky="ew", padx=5)
+        self.contrasena2.trace_add("write", self.validar_pass)
+
+        # --- Documentos ---
+        docs = ttk.LabelFrame(container, text="Documentos Adjuntos", padding=5)
+        docs.grid(row=3, column=0, sticky="nsew", padx=5, pady=5)
+        for i in range(1):
+            docs.grid_rowconfigure(i, weight=1)
+        for j in range(4):
+            docs.grid_columnconfigure(j, weight=1)
+
+        ttk.Button(docs, text="📄 CV", command=self.select_cv).grid(row=0, column=0, padx=3, pady=3)
+        ttk.Button(docs, text="🧾 Contrato", command=self.select_contrato).grid(row=0, column=1, padx=3, pady=3)
+        ttk.Button(docs, text="🪪 Identidad", command=self.select_identidad).grid(row=0, column=2, padx=3, pady=3)
+        ttk.Button(docs, text="✅ Solvencia", command=self.select_solvencia).grid(row=0, column=3, padx=3, pady=3)
+
+        # --- Botones principales ---
+        btns = ttk.Frame(container)
+        btns.grid(row=4, column=0, sticky="nsew", padx=5, pady=5)
+        for i in range(1):
+            btns.grid_rowconfigure(i, weight=1)
+        for j in range(3):
+            btns.grid_columnconfigure(j, weight=1)
+
+        ttk.Button(btns, text="💾 Crear", command=self.guardar, width=14).grid(row=0, column=0, padx=3, pady=3)
+        ttk.Button(btns, text="🧹 Limpiar", command=self.limpiar, width=14).grid(row=0, column=1, padx=3, pady=3)
+        ttk.Button(btns, text="❌ Salir", command=self.cancelar, width=14).grid(row=0, column=2, padx=3, pady=3)
+
+        init_db()
 
     # --- Funciones de interfaz ---
     def seleccionar_foto(self, event=None):
@@ -292,15 +369,16 @@ class App:
     def limpiar(self):
         for var in [self.identidad, self.nombre1, self.nombre2, self.apellido1, self.apellido2,
                     self.telefono, self.profesion, self.direccion, self.usuario, self.contrasena, self.contrasena2,
-                    self.sueldo, self.anioss, self.diasg, self.tipo_contrato, self.dependencia, self.cargo]:
+                    self.sueldo, self.anioss, self.diasg]:
             var.set("")
         self.foto_label.configure(image="", text="📷 Seleccionar Foto")
         self.cv_src = self.contrato_src = self.solvencia_src = self.id_src = self.foto_src = None
 
     def cancelar(self):
-        self.root.destroy()
-        import Main
-        os.execl(sys.executable, sys.executable, "Main.py")
+        import os
+        import sys
+        self.root.destroy()  # cierra la ventana actual
+        os.execl(sys.executable, sys.executable, "Main.py")  # reemplaza este proceso con Main.py
 
     def guardar(self):
         guardar_empleado(
