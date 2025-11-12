@@ -9,6 +9,7 @@ from cargo import VentanaCargo
 import subprocess
 from datetime import date, timedelta
 from crearuser import CrearUsuarioApp
+from contrato import VentanaContrato
 from panelperfil import AdminUsuarios
 import matplotlib
 matplotlib.use("TkAgg")  # FORZAR Tkinter backend
@@ -33,6 +34,14 @@ DB_CONFIG = {
 
 # ---------- VARIABLE GLOBAL PARA EL TOAST ----------
 MOSTRAR_BIENVENIDA = True
+
+# 🔧 Evitar errores "invalid command name" al cerrar ventanas
+import tkinter
+def safe_tk_error_handler(*args):
+    # Ignora errores de callbacks después del cierre
+    pass
+
+tkinter.Tk.report_callback_exception = staticmethod(safe_tk_error_handler)
 
 # ---------- CLASE DASHBOARD PRINCIPAL ----------
 class PantallaPrincipal:
@@ -103,10 +112,10 @@ class PantallaPrincipal:
             ("👨🏼‍💻 Dependencias", self.abrir_dependencia),
             ("👥 Ver Colaboradores", self.abrir_ver_usuario),
             ("📆 Ausencias", self.mostrar_info_sistema),
-            ("📊 Reporte por Contrato", self.mostrar_dashboard),
-            ("📆 Reporte de Vacaciones", self.mostrar_dashboard),
+            ("📊 Reportes(Contrato)", self.mostrar_dashboard),
+            ("📑 Contrato", self.mostrar_contrato),
             ("📋 Informes de Pago", self.hacer_solicitudes),
-            ("📜 Perfiles", self.mostrar_contrato),
+            ("📜 Perfiles", self.mostrar_perfiles),
             ("🔚 Salir", self.volver_login)
         ]
 
@@ -207,15 +216,15 @@ class PantallaPrincipal:
         tabla_frame = ttk.Frame(solicitudes_frame)
         tabla_frame.pack(fill="both", padx=5, pady=5)
 
-        columnas = ("id", "usuario", "tipo", "fecha", "descripcion", "estado", "ver")
-        encabezados = ["ID", "Usuario", "Tipo Solicitud", "Fecha", "Descripción", "Estado", "👁️"]
+        columnas = ("#", "identidad", "usuario", "tipo", "cargo", "dependencia","fecha", "estado", "ver")
+        encabezados = ["#", "Identidad", "Usuario", "Tipo Solicitud", "cargo", "dependencia", "fecha","Estado", "👁️"]
 
         self.tree = ttk.Treeview(tabla_frame, columns=columnas, show="headings", height=10)
         for col, texto in zip(columnas, encabezados):
             self.tree.heading(col, text=texto)
             self.tree.column(col, anchor="center", width=130)
-        self.tree.column("descripcion", width=250)
-        self.tree.column("ver", width=50)
+        self.tree.column("#", width=40)  # más estrecha para el número
+        self.tree.column("ver", width=50)  # mantienes tu columna ver pequeña
 
         vsb = ttk.Scrollbar(tabla_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -227,35 +236,35 @@ class PantallaPrincipal:
 
         self.tree.bind("<Double-1>", self.ver_detalle_solicitud)
 
-        # ---------- GRÁFICOS ----------
-        graficos_container = tk.Frame(container, bg=BG)
-        graficos_container.pack(fill="x", pady=(15, 0))
+        # ---------- CONTENEDOR HORIZONTAL PARA GRÁFICOS + NUEVO CUADRO ----------
+        graficos_y_cuadro_container = tk.Frame(container, bg=BG)
+        graficos_y_cuadro_container.pack(fill="x", pady=(15, 0))
 
-        import matplotlib
-        matplotlib.use("TkAgg")
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        import matplotlib.pyplot as plt
+        # ---------- GRÁFICOS ----------
+        graficos_container = tk.Frame(graficos_y_cuadro_container, bg=BG)
+        graficos_container.pack(side="left", fill="x", expand=True)
 
         datos_graficos = [
-            ("Colaboradores", int(cuadros_data[0][1])),
-            ("Contrato Especial", int(cuadros_data[1][1])),
-            ("Contrato Jornal", int(cuadros_data[2][1])),
-            ("Total Colaboradores", int(cuadros_data[3][1]))
+            ("Total sueldos", int(cuadros_data[0][1])),
+            ("Vacaciones/Ausencias", int(cuadros_data[1][1])),
+            #("Contrato Jornal", int(cuadros_data[2][1])),
+            ("Total Colaboradores", int(cuadros_data[2][1]))
         ]
 
-        colores_graficos = ["#1abc9c", "#3498db", "#e67e22", "#9b59b6"]
+        colores_graficos = ["#1abc9c", "#3498db", "#9b59b6"]
+        #  "#e67e22",
 
         for i, (titulo, valor) in enumerate(datos_graficos):
-            frame = tk.Frame(graficos_container, bg=BG, width=200, height=100)
-            frame.pack(side="left", expand=True, padx=10, pady=10)
+            frame = tk.Frame(graficos_container, bg=BG, width=210, height=120) 
+            frame.pack(side="left", expand=True, padx=6, pady=10)
             frame.pack_propagate(False)
 
-            nombre_frame = tk.Frame(frame, bg=colores_graficos[i], height=25)
+            nombre_frame = tk.Frame(frame, bg=colores_graficos[i], height=28)
             nombre_frame.pack(fill="x", side="top")
             tk.Label(nombre_frame, text=titulo, bg=colores_graficos[i], fg="white",
-                     font=("Segoe UI", 11, "bold")).pack(expand=True)
+                     font=("Segoe UI", 10, "bold")).pack(expand=True)
 
-            fig, ax = plt.subplots(figsize=(2.3, 1.2))
+            fig, ax = plt.subplots(figsize=(2.6, 1.4))
             ax.pie([valor, max(valor * 1.5, 100) - valor],
                    startangle=180,
                    colors=[colores_graficos[i], "#ecf0f1"],
@@ -265,6 +274,25 @@ class PantallaPrincipal:
             canvas = FigureCanvasTkAgg(fig, master=frame)
             canvas.draw()
             canvas.get_tk_widget().pack(expand=True, fill="both")
+
+        # ---------- NUEVO CUADRO AL LADO DE LOS GRÁFICOS ----------
+        nuevo_cuadro_container = tk.Frame(graficos_y_cuadro_container, bg=BG, width=190, height=120)
+        nuevo_cuadro_container.pack(side="left", padx=6, pady=10)
+        nuevo_cuadro_container.pack_propagate(False)
+
+        nuevo_cuadros_data = [
+            ("🏖️Vacaciones /3", "🕒 Ausencias /2", "#1abc9c"),
+        ]
+
+        for i, (titulo, valor, color) in enumerate(nuevo_cuadros_data):
+            frame = tk.Frame(nuevo_cuadro_container, bg=color, width=240, height=100)
+            frame.pack(expand=True, fill="both")
+            frame.pack_propagate(False)
+
+            tk.Label(frame, text=titulo, bg=color, fg="white",
+                     font=("Segoe UI", 11, "bold"), anchor="center", justify="center").pack(expand=True, pady=(5, 2))
+            tk.Label(frame, text=valor, bg=color, fg="white",
+                     font=("Segoe UI", 11, "bold"), anchor="center", justify="center").pack(expand=True, pady=(2, 5))
 
         # --- Texto azul ---
         tk.Label(
@@ -305,6 +333,22 @@ class PantallaPrincipal:
     def mostrar_dashboard(self):
         from reportec import ReporteEmpleados
         ReporteEmpleados(self.root)
+    
+    # ✅ FUNCIONALIDAD CORRECTA: Mostrar Contrato SIN cerrar el Main
+    def mostrar_contrato(self):
+        from contrato import VentanaContrato
+        ventana_contrato = VentanaContrato(self.root)
+        ventana_contrato.transient(self.root)
+        ventana_contrato.grab_set()
+        ventana_contrato.focus_set()
+
+    # ✅ Nueva función separada para los perfiles (antes era conflicto)
+    def mostrar_perfiles(self):
+        from panelperfil import AdminUsuarios
+        ventana_panel = AdminUsuarios(self.root, usuario_actual=self.usuario_actual)
+        ventana_panel.transient(self.root)
+        ventana_panel.grab_set()
+        ventana_panel.focus_set()
 
     def abrir_cargo(self):
         VentanaCargo(self.root)
@@ -316,21 +360,6 @@ class PantallaPrincipal:
         from dependencia import VentanaDependencia
         VentanaDependencia(self.root)
 
-    def mostrar_contrato(self):
-        try:
-            for task in self.root.tk.call('after', 'info'):
-                self.root.after_cancel(task)
-        except Exception:
-            pass
-
-        try:
-            from panelperfil import AdminUsuarios  # tu clase de panel de usuarios
-            ventana_panel = AdminUsuarios(self.root, usuario_actual=self.usuario_actual)
-            ventana_panel.focus_set()
-        except Exception as e:
-            from tkinter import messagebox
-            messagebox.showerror("Error", f"No se pudo abrir el panel de usuarios:\n{e}")
-
     def mostrar_info_sistema(self):
         messagebox.showinfo("Ausencias", "Aquí se abriría el formulario de ausencias.")
 
@@ -338,11 +367,9 @@ class PantallaPrincipal:
         global MOSTRAR_BIENVENIDA
         MOSTRAR_BIENVENIDA = True
         script_path = os.path.abspath("log.py")
-        # Inicia el nuevo proceso primero
         subprocess.Popen([sys.executable, script_path])
         self.root.after(100, lambda: subprocess.Popen([sys.executable, script_path]))
-        self.root.destroy()
-        # Cierra el proceso actual completamente
+        self._cerrar()  # Cancela callbacks y destruye root de forma segura
         sys.exit()
 
     def abrir_colaborador(self):

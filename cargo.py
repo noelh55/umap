@@ -1,9 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import psycopg2
-import subprocess
-import os
-from editarcargo import EditarCargo
+import threading
 
 # ---------------- CONFIGURACIÓN BASE DE DATOS ----------------
 DB_CONFIG = {
@@ -14,20 +12,45 @@ DB_CONFIG = {
     "password": "umap"
 }
 
+
+# ---------------- FUNCIÓN DE TOAST (NOTIFICACIÓN FLOTANTE) ----------------
+def mostrar_toast(master, mensaje):
+    toast = tk.Toplevel(master)
+    toast.overrideredirect(True)
+    toast.configure(bg="#27ae60")
+    toast.attributes("-topmost", True)
+    toast.wm_attributes("-alpha", 0.92)
+
+    label = tk.Label(toast, text=mensaje, bg="#27ae60", fg="white",
+                     font=("Segoe UI", 11, "bold"), padx=20, pady=10)
+    label.pack()
+
+    # Posiciona el toast abajo a la derecha de la ventana principal
+    master.update_idletasks()
+    x = master.winfo_x() + master.winfo_width() - 250
+    y = master.winfo_y() + master.winfo_height() - 100
+    toast.geometry(f"230x50+{x}+{y}")
+
+    # Desaparece después de 2 segundos
+    def cerrar():
+        toast.destroy()
+
+    threading.Timer(2.0, cerrar).start()
+
+
 # ---------------- VENTANA DE CARGOS ----------------
 class VentanaCargo(tk.Toplevel):
     def __init__(self, master, combobox_cargos=None):
-        # --- Inicialización ---
         super().__init__(master)
-        self.title("Formulario de Cargos")
-        self.geometry("500x550")
+        self.title("Gestión de Cargos")
+        self.geometry("600x550")
         self.resizable(False, False)
         self.configure(bg="#ecf0f1")
         self.transient(master)
         self.grab_set()
         self.combobox_cargos = combobox_cargos
+        self.cargo_id_seleccionado = None
 
-        # --- Centrar ventana ---
         self.centrar_ventana()
 
         # --- Estilos modernos ---
@@ -44,76 +67,84 @@ class VentanaCargo(tk.Toplevel):
         self.frame.pack(fill="both", expand=True, padx=20, pady=20)
 
         # --- Título ---
-        title = tk.Label(
-            self.frame,
-            text="Formulario de Cargos",
-            bg="#ffffff",
-            fg="#2c3e50",
-            font=("Segoe UI", 18, "bold")
-        )
-        title.pack(pady=(10, 20))
+        title = tk.Label(self.frame, text="Gestión de Cargos", bg="#ffffff", fg="#2c3e50",
+                         font=("Segoe UI", 18, "bold"))
+        title.pack(pady=(10, 15))
 
-        # ===================== ID + NOMBRE DEL CARGO =====================
+        # --- Nombre del cargo ---
         id_nombre_frame = tk.Frame(self.frame, bg="#ffffff")
         id_nombre_frame.pack(fill="x", pady=5)
 
-        # ID
-        #tk.Label(id_nombre_frame, text="ID:", bg="#ffffff", fg="#2c3e50", font=("Segoe UI", 11)).grid(row=0, column=0, padx=(0,5), sticky="w")
-        #self.entry_id = ttk.Entry(id_nombre_frame, width=8, state="readonly")
-        #self.entry_id.grid(row=0, column=1, padx=(0,15))
-
-        # Nombre del cargo
-        tk.Label(id_nombre_frame, text="Nombre del cargo:", bg="#ffffff", fg="#2c3e50", font=("Segoe UI", 11)).grid(row=0, column=2, sticky="w")
-        self.entry_nombre = ttk.Entry(id_nombre_frame)
-        self.entry_nombre.grid(row=0, column=3, sticky="ew", padx=(5,0))
-        id_nombre_frame.columnconfigure(3, weight=1)
+        tk.Label(id_nombre_frame, text="Nombre del cargo:", bg="#ffffff", fg="#2c3e50",
+                 font=("Segoe UI", 11)).grid(row=0, column=0, sticky="w")
+        self.entry_nombre = ttk.Entry(id_nombre_frame, state="normal")
+        self.entry_nombre.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        id_nombre_frame.columnconfigure(1, weight=1)
 
         # --- Descripción ---
-        label_desc = tk.Label(self.frame, text="Descripción:", bg="#ffffff", fg="#2c3e50", font=("Segoe UI", 11))
-        label_desc.pack(anchor="w", pady=(10, 0))
-        self.text_descripcion = tk.Text(self.frame, height=6, font=("Segoe UI", 11), bd=1, relief="solid", wrap="word")
-        self.text_descripcion.pack(fill="both", pady=8)
+        desc_frame = tk.Frame(self.frame, bg="#ffffff")
+        desc_frame.pack(fill="x", pady=5)
 
-        # --- Botones principales ---
+        tk.Label(desc_frame, text="Descripción:", bg="#ffffff", fg="#2c3e50",
+                 font=("Segoe UI", 11)).grid(row=0, column=0, sticky="w")
+        self.entry_descripcion = ttk.Entry(desc_frame, state="normal")
+        self.entry_descripcion.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        desc_frame.columnconfigure(1, weight=1)
+
+        # ===================== TABLA DE CARGOS =====================
+        tabla_frame = tk.Frame(self.frame, bg="#ffffff")
+        tabla_frame.pack(fill="both", expand=True, pady=(10, 5))
+
+        tk.Label(tabla_frame, text="Cargos Registrados", bg="#ffffff", fg="#2c3e50",
+                 font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=5, pady=(0, 5))
+
+        self.tree = ttk.Treeview(tabla_frame, columns=("ID", "Nombre", "Descripción"),
+                                 show="headings", height=6)
+        self.tree.heading("ID", text="ID")
+        self.tree.heading("Nombre", text="Nombre")
+        self.tree.heading("Descripción", text="Descripción")
+        self.tree.column("ID", width=50, anchor="center")
+        self.tree.column("Nombre", width=180)
+        self.tree.column("Descripción", width=250)
+
+        vsb = ttk.Scrollbar(tabla_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        # --- Doble clic en tabla ---
+        self.tree.bind("<Double-1>", self.mostrar_en_campos)
+
+        # ===================== BOTONES DEBAJO DE LA TABLA =====================
         btn_frame = tk.Frame(self.frame, bg="#ffffff")
-        btn_frame.pack(pady=20, fill="x")
+        btn_frame.pack(pady=15, fill="x")
 
-        btn_guardar = tk.Button(
-            btn_frame, text="💾 Guardar", bg="#1abc9c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=self.guardar
-        )
-        btn_guardar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
+        self.btn_guardar = tk.Button(btn_frame, text="💾 Guardar", bg="#1abc9c", fg="white",
+                                     font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                                     command=self.guardar)
+        self.btn_guardar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
-        btn_limpiar = tk.Button(
-            btn_frame, text="🧹 Limpiar", bg="#3498db", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=self.limpiar
-        )
-        btn_limpiar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
+        self.btn_editar = tk.Button(btn_frame, text="✏️ Editar", bg="#3498db", fg="white",
+                                    font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                                    command=self.habilitar_edicion)
+        self.btn_editar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
-        btn_cerrar = tk.Button(
-            btn_frame, text="❌ Cerrar", bg="#e74c3c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=self.destroy
-        )
+        self.btn_actualizar = tk.Button(btn_frame, text="🔄 Actualizar", bg="#f39c12", fg="white",
+                                        font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                                        command=self.actualizar, state="disabled")
+        self.btn_actualizar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
+
+        btn_cerrar = tk.Button(btn_frame, text="❌ Cerrar", bg="#e74c3c", fg="white",
+                               font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                               command=self.destroy)
         btn_cerrar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
-        # --- Botón para ver cargos registrados ---
-        btn_ver = tk.Button(
-            self.frame, text="👁️ Ver Cargos Registrados",
-            bg="#16a085", fg="white", font=("Segoe UI", 10, "bold"),
-            relief="flat", cursor="hand2", command=self.ver_cargos
-        )
-        btn_ver.pack(fill="x", pady=(10, 5), ipadx=5, ipady=6)
-
-        # --- Inicializar base de datos ---
+        # --- Inicializar ---
         self.init_db()
+        self.cargar_cargos()
 
-    # ---------------- FUNCIONES PRINCIPALES ----------------
-
+    # ---------------- FUNCIONES ----------------
     def init_db(self):
-        """Crea la tabla de cargos si no existe."""
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
@@ -130,7 +161,6 @@ class VentanaCargo(tk.Toplevel):
             messagebox.showerror("Error BD", f"No se pudo inicializar la tabla de cargos:\n{e}")
 
     def centrar_ventana(self):
-        """Centra la ventana en pantalla."""
         self.update_idletasks()
         w = self.winfo_width()
         h = self.winfo_height()
@@ -141,32 +171,23 @@ class VentanaCargo(tk.Toplevel):
         self.geometry(f"+{x}+{y}")
 
     def guardar(self):
-        """Guarda un nuevo cargo en la base de datos."""
         nombre = self.entry_nombre.get().strip()
-        descripcion = self.text_descripcion.get("1.0", tk.END).strip()
-
+        descripcion = self.entry_descripcion.get().strip()
         if not nombre:
             messagebox.showwarning("Atención", "Debe ingresar el nombre del cargo.")
             return
-
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO cargos(nombre, descripcion) VALUES (%s, %s) RETURNING id",
-                (nombre, descripcion)
-            )
+            cur.execute("INSERT INTO cargos(nombre, descripcion) VALUES (%s, %s) RETURNING id",
+                        (nombre, descripcion))
             cargo_id = cur.fetchone()[0]
             conn.commit()
             conn.close()
 
-            self.entry_id.config(state="normal")
-            self.entry_id.delete(0, tk.END)
-            self.entry_id.insert(0, str(cargo_id))
-            self.entry_id.config(state="readonly")
-
-            messagebox.showinfo("Éxito", f"Cargo guardado correctamente.\nID asignado: {cargo_id}")
+            mostrar_toast(self, "Cargo guardado correctamente")
             self.limpiar()
+            self.cargar_cargos()
 
             if self.combobox_cargos:
                 current_values = list(self.combobox_cargos['values'])
@@ -181,102 +202,89 @@ class VentanaCargo(tk.Toplevel):
             messagebox.showerror("Error", f"No se pudo guardar en la base de datos:\n{e}")
 
     def limpiar(self):
-        """Limpia los campos del formulario."""
+        self.entry_nombre.config(state="normal")
+        self.entry_descripcion.config(state="normal")
         self.entry_nombre.delete(0, tk.END)
-        self.text_descripcion.delete("1.0", tk.END)
-        self.entry_id.config(state="normal")
-        self.entry_id.delete(0, tk.END)
-        self.entry_id.config(state="readonly")
+        self.entry_descripcion.delete(0, tk.END)
+        self.btn_actualizar.config(state="disabled")
+        self.btn_guardar.config(state="normal")
+        self.btn_editar.config(state="normal")
+        self.cargo_id_seleccionado = None
 
-    def ver_cargos(self):
+    def cargar_cargos(self):
+        """Carga los cargos en la tabla."""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
             cur.execute("SELECT id, nombre, descripcion FROM cargos ORDER BY id")
-            cargos = cur.fetchall()
+            for c in cur.fetchall():
+                self.tree.insert("", "end", values=c)
             conn.close()
         except Exception as e:
-            messagebox.showerror("Error BD", f"No se pudieron obtener los cargos:\n{e}")
+            messagebox.showerror("Error", f"No se pudieron cargar los cargos:\n{e}")
+
+    def mostrar_en_campos(self, event):
+        """Muestra los datos seleccionados en los campos superiores."""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        item = self.tree.item(selected[0], "values")
+        self.cargo_id_seleccionado, nombre, descripcion = item
+
+        self.entry_nombre.config(state="normal")
+        self.entry_descripcion.config(state="normal")
+        self.entry_nombre.delete(0, tk.END)
+        self.entry_descripcion.delete(0, tk.END)
+        self.entry_nombre.insert(0, nombre)
+        self.entry_descripcion.insert(0, descripcion)
+        self.entry_nombre.config(state="disabled")
+        self.entry_descripcion.config(state="disabled")
+
+        self.btn_editar.config(state="normal")
+        self.btn_actualizar.config(state="disabled")
+        self.btn_guardar.config(state="disabled")
+
+    def habilitar_edicion(self):
+        if not self.cargo_id_seleccionado:
+            messagebox.showwarning("Atención", "Debe seleccionar un cargo para editar.")
+            return
+        self.entry_nombre.config(state="normal")
+        self.entry_descripcion.config(state="normal")
+        self.btn_actualizar.config(state="normal")
+        self.btn_guardar.config(state="disabled")
+        self.btn_editar.config(state="disabled")
+
+    def actualizar(self):
+        """Actualiza los datos del cargo seleccionado."""
+        if not self.cargo_id_seleccionado:
+            messagebox.showwarning("Atención", "No hay cargo seleccionado.")
             return
 
-        if not cargos:
-            messagebox.showinfo("Información", "No hay cargos registrados.")
+        nombre = self.entry_nombre.get().strip()
+        descripcion = self.entry_descripcion.get().strip()
+        if not nombre:
+            messagebox.showwarning("Atención", "Debe ingresar el nombre del cargo.")
             return
 
-        # --- Ventana de lista ---
-        ver_win = tk.Toplevel(self)
-        ver_win.title("Lista de Cargos")
-        ver_win.geometry("500x350")
-        ver_win.configure(bg="#ecf0f1")
-        ver_win.transient(self)
-        ver_win.grab_set()
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE cargos
+                SET nombre = %s, descripcion = %s
+                WHERE id = %s
+            """, (nombre, descripcion, self.cargo_id_seleccionado))
+            conn.commit()
+            conn.close()
 
-        # Centrar ventana de lista
-        ver_win.update_idletasks()
-        w = ver_win.winfo_width()
-        h = ver_win.winfo_height()
-        ws = ver_win.winfo_screenwidth()
-        hs = ver_win.winfo_screenheight()
-        x = (ws // 2) - (w // 2)
-        y = (hs // 2) - (h // 2)
-        ver_win.geometry(f"{w}x{h}+{x}+{y}")
+            mostrar_toast(self, "Actualizado correctamente ✅")
+            self.limpiar()
+            self.cargar_cargos()
 
-        tk.Label(
-            ver_win, text="Cargos Registrados",
-            bg="#ecf0f1", fg="#2c3e50", font=("Segoe UI", 14, "bold")
-        ).pack(pady=10)
-
-        frame_tabla = tk.Frame(ver_win, bg="#ffffff", bd=1, relief="solid")
-        frame_tabla.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # --- Tabla ---
-        tree = ttk.Treeview(frame_tabla, columns=("ID", "Nombre", "Descripción"), show="headings", height=10)
-        tree.heading("ID", text="ID")
-        tree.heading("Nombre", text="Nombre")
-        tree.heading("Descripción", text="Descripción")
-        tree.column("ID", width=50, anchor="center")
-        tree.column("Nombre", width=150)
-        tree.column("Descripción", width=260)
-
-        vsb = ttk.Scrollbar(frame_tabla, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set)
-        tree.pack(side="left", fill="both", expand=True)
-        vsb.pack(side="right", fill="y")
-
-        for c in cargos:
-            tree.insert("", "end", values=c)
-
-        # --- Botones de acción ---
-        btn_frame = tk.Frame(ver_win, bg="#ecf0f1")
-        btn_frame.pack(fill="x", pady=10)
-
-        def editar_cargo():
-            selected = tree.selection()
-            if not selected:
-                messagebox.showwarning("Atención", "Debe seleccionar un cargo para editar.")
-                return
-            item = tree.item(selected[0], "values")
-            cargo_id, nombre, descripcion = item
-
-            ver_win.destroy()
-            self.destroy()
-
-            from editarcargo import EditarCargo
-            EditarCargo(self.master, cargo_id, nombre, descripcion)
-
-        btn_editar = tk.Button(
-            btn_frame, text="✏️ Editar Cargo", bg="#1abc9c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=editar_cargo
-        )
-        btn_editar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
-
-        btn_cerrar = tk.Button(
-            btn_frame, text="❌ Cerrar", bg="#e74c3c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=ver_win.destroy
-        )
-        btn_cerrar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo actualizar el cargo:\n{e}")
 
 # ---------------- EJEMPLO DE USO ----------------
 if __name__ == "__main__":
@@ -290,6 +298,5 @@ if __name__ == "__main__":
     def abrir_cargo():
         VentanaCargo(root, combobox_cargos=combo)
 
-    ttk.Button(root, text="Agregar Cargo", command=abrir_cargo).pack(pady=10)
-
+    ttk.Button(root, text="Abrir Gestión de Cargos", command=abrir_cargo).pack(pady=10)
     root.mainloop()

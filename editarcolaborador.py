@@ -192,13 +192,29 @@ def guardar_empleado(
         conn.close()
 
 # --- INTERFAZ ---
-class App:
-    def __init__(self, root, usuario_actual=None):
+class App(tk.Toplevel):
+    def __init__(self, root,  emp_id, usuario_actual=None):
         self.root = root
         self.usuario_actual = usuario_actual
-        root.title("UMAP - Crear Colaborador")
+        root.title("Editar Colaborador")
         root.state("zoomed")
         root.configure(bg="#f4f6f9")
+        self.configure(bg="#f4f6f9")
+        super().__init__()
+        self.emp_id = emp_id
+        self.title("Editar Colaborador")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.cargar_datos()  # método que consulta la BD y rellena los campos
+        
+        super().__init__()
+        self.emp_id = emp_id
+        self.title("Editar Colaborador")
+        self.geometry("800x600")
+        self.configure(bg="#f4f6f9")
+
+        # Cargar datos del empleado
+        self.cargar_datos()
 
         # Variables
         self.identidad = tk.StringVar()
@@ -494,6 +510,48 @@ class App:
         self.verificar_contratos()
 
         init_db()
+
+    def cargar_datos(self):
+        conn = conectar_bd()
+        if not conn:
+            return
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM colaborador WHERE id = %s", (self.emp_id,))
+        fila = cur.fetchone()
+        conn.close()
+        
+        if not fila:
+            messagebox.showerror("Error", "Colaborador no encontrado")
+            self.destroy()
+            return
+
+        self.foto_path = fila[1]
+        self.tipo_contrato_var.set(fila[2])
+        self.identidad_var.set(fila[3])
+        self.fecha_nacimiento_var.set(fila[4])
+        self.nombre1_var.set(fila[5])
+        self.nombre2_var.set(fila[6])
+        self.apellido1_var.set(fila[7])
+        self.apellido2_var.set(fila[8])
+        self.telefono_var.set(fila[9])
+        self.profesion_var.set(fila[10])
+        self.direccion_var.set(fila[11])
+        self.dependencia_var.set(fila[12])
+        self.cargo_var.set(fila[13])
+        self.fecha_inicio_var.set(fila[14])
+        self.fecha_finalizacion_var.set(fila[15])
+        self.sueldo_var.set(fila[16])
+        self.diasg_var.set(fila[17])
+        self.anioss_var.set(fila[18])
+        self.usuario_var.set(fila[19])
+        self.contrasena_var.set(fila[20])
+        self.confirmacion_contrasena_var.set(fila[21])
+        self.rol_var.set(fila[22])
+        self.unidad_var.set(fila[23])
+        self.cv_src = fila[24]
+        self.contrato_src = fila[25]
+        self.id_src = fila[26]
+        self.solvencia_src = fila[27]
 
     def verificar_contratos(self):
         try:
