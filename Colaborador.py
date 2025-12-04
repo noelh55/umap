@@ -2,6 +2,7 @@ import os
 import shutil
 import re
 import psycopg2
+import psycopg2.extras
 from psycopg2 import Error
 from datetime import date
 import tkinter as tk
@@ -194,6 +195,13 @@ def guardar_empleado(
 # --- INTERFAZ ---
 class App:
     def __init__(self, root, usuario_actual=None):
+        style = ttk.Style()
+        style.configure("TLabel", font=("Segoe UI", 11))
+        style.configure("TEntry", font=("Segoe UI", 11))
+        style.configure("TButton", font=("Segoe UI", 11), padding=6)
+        style.configure("Folder.TButton", font=("Segoe UI", 11), padding=8)
+        style.configure("Success.TButton", background="#4CAF50", foreground="white")
+
         self.root = root
         self.usuario_actual = usuario_actual
         root.title("UMAP - Crear Colaborador")
@@ -289,6 +297,7 @@ class App:
         self.identidad_entry = ttk.Entry(datos, textvariable=self.identidad, width=25,
                                          validate='key', validatecommand=vcmd)
         self.identidad_entry.grid(row=0, column=4, sticky="ew", padx=5, pady=3)
+        self.identidad_entry.bind("<KeyRelease>", self.buscar_colaborador_por_identidad)
 
         # Fecha nacimiento
         ttk.Label(datos, text="Fecha Nacimiento").grid(row=1, column=1, sticky="ew", padx=5, pady=3)
@@ -543,6 +552,55 @@ class App:
             messagebox.showerror("Error al verificar contratos", str(e))
 
     # --- Funciones de interfaz ---
+    def buscar_colaborador_por_identidad(self, event=None):
+        identidad = self.identidad.get().strip()
+        if len(identidad) < 4:  # esperar un poco para evitar spam a la BD
+            return
+        
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("""
+            SELECT *
+            FROM colaborador
+            WHERE identidad LIKE %s
+            LIMIT 1
+        """, (identidad + "%",))
+        row = cur.fetchone()
+        conn.close()
+
+        if row:
+            # llenar campos
+            self.nombre1.set(row["nombre1"])
+            self.nombre2.set(row["nombre2"])
+            self.apellido1.set(row["apellido1"])
+            self.apellido2.set(row["apellido2"])
+            self.telefono.set(row["telefono"])
+            self.direccion.set(row["direccion"])
+            self.profesion.set(row["profesion"])
+            self.unidad.set(row["unidad"])
+            self.sueldo.set(row["sueldo"])
+
+            # combos
+            self.dependencia.set(row["dependencia"]) if row["dependencia"] else None
+            self.cargo.set(row["cargo"]) if row["cargo"] else None
+            self.tipo_contrato.set(row["tipo_contrato"]) if row["tipo_contrato"] else None
+
+            # fechas
+            try:
+                self.fecha_inicio.set_date(row["fecha_inicio"])
+                self.fecha_fin.set_date(row["fecha_fin"])
+                self.fecha_nac_entry.set_date(row["fecha_nacimiento"])
+            except:
+                pass
+
+            # foto
+            if row["foto"] and os.path.exists(row["foto"]):
+                img = Image.open(row["foto"])
+                img = img.resize((130,130))
+                self.foto_img = ImageTk.PhotoImage(img)
+                self.foto_label.configure(image=self.foto_img, text="")
+                self.foto_label.image = self.foto_img
+
     def seleccionar_foto(self, event=None):
         path = filedialog.askopenfilename(filetypes=[("Imagen", "*.png *.jpg *.jpeg")])
         if path:

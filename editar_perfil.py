@@ -28,16 +28,17 @@ class EditarPerfil(tk.Toplevel):
         self.resizable(False, False)
         self.configure(bg="#ecf0f1")
 
-        # ✅ Ventana flotante
+        # Ventana flotante
         self.transient(master)
         self.grab_set()
         self.focus_set()
         self.lift()
 
         self.foto_path_actual = None
-        self.foto_img = None  # 🔹 Guardará la imagen en memoria
+        self.foto_img = None  
+        self.nueva_foto_bytes = None  # ← NUEVA FOTO TEMPORAL
+        self.origin = None    
 
-        # Centrar ventana
         self.update_idletasks()
         x = (self.winfo_screenwidth() // 2) - (520 // 2)
         y = (self.winfo_screenheight() // 2) - (700 // 2)
@@ -63,6 +64,14 @@ class EditarPerfil(tk.Toplevel):
         self.foto_label = tk.Label(self.foto_frame, text="📷 Foto Usuario", bg="#e0e0e0", fg="gray")
         self.foto_label.place(relx=0.5, rely=0.5, anchor="center")
 
+        # --- Botón para cambiar foto (solo habilitado cuando editable=True)
+        self.btn_cambiar_foto = tk.Button(
+            self.frame, text="📁 Cambiar Foto", bg="#8e44ad", fg="white",
+            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+            state="disabled", command=self.elegir_foto
+        )
+        self.btn_cambiar_foto.pack(pady=(0,10))
+
         datos = tk.Frame(self.frame, bg="#ffffff")
         datos.pack(fill="both", expand=True, padx=6, pady=4)
 
@@ -79,7 +88,9 @@ class EditarPerfil(tk.Toplevel):
         ]
 
         for i, (lbl, key) in enumerate(labels):
-            tk.Label(datos, text=lbl + ":", bg="#ffffff", anchor="w").grid(row=i, column=0, sticky="w", pady=8, padx=(4, 8))
+            tk.Label(datos, text=lbl + ":", bg="#ffffff", anchor="w").grid(
+                row=i, column=0, sticky="w", pady=8, padx=(4, 8)
+            )
             ent = ttk.Entry(datos, state="disabled", width=28)
             ent.grid(row=i, column=1, sticky="ew", padx=(0, 6), ipady=5)
             datos.columnconfigure(1, weight=1)
@@ -93,170 +104,248 @@ class EditarPerfil(tk.Toplevel):
 
         self.btn_solicitar = tk.Button(
             btn_frame, text="📨 Solicitar Actualización", bg="#3498db", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2", command=self.solicitar_actualizacion
+            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+            command=self.solicitar_actualizacion
         )
         self.btn_solicitar.pack(side="left", expand=True, fill="x", padx=6, ipadx=4, ipady=6)
 
         self.btn_actualizar = tk.Button(
             btn_frame, text="💾 Actualizar", bg="#1abc9c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2", command=self.actualizar, state="disabled"
+            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+            command=self.actualizar, state="disabled"
         )
         self.btn_actualizar.pack(side="left", expand=True, fill="x", padx=6, ipadx=4, ipady=6)
 
         self.btn_cerrar = tk.Button(
             btn_frame, text="❌ Cerrar", bg="#e74c3c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2", command=self.destroy
+            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+            command=self.destroy
         )
         self.btn_cerrar.pack(side="left", expand=True, fill="x", padx=6, ipadx=4, ipady=6)
 
         self.init_db()
         self.load_user()
 
-    # ---------------- FUNCIONES BD ----------------
+    # ---------------- BD ----------------
     def init_db(self):
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             conn.close()
         except Exception as e:
-            messagebox.showerror("Error BD", f"No se pudo conectar a la base de datos:\n{e}")
+            messagebox.showerror("Error BD", f"No se pudo conectar:\n{e}")
 
+    # ---------------- CARGAR USUARIO ----------------
     def load_user(self):
-        """Carga datos del usuario y su estado editable."""
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
+            row = None
+
+            # Buscar en usuarios
             if str(self.user_id).isdigit():
-                cur.execute("SELECT * FROM usuarios WHERE id = %s", (int(self.user_id),))
+                cur.execute("SELECT * FROM usuarios WHERE id=%s", (int(self.user_id),))
             else:
-                cur.execute("SELECT * FROM usuarios WHERE usuario = %s", (self.user_id,))
+                cur.execute("SELECT * FROM usuarios WHERE usuario=%s", (self.user_id,))
 
             row = cur.fetchone()
+
+            if row:
+                self.origin = "usuarios"
+            else:
+                # Buscar en colaborador
+                if str(self.user_id).isdigit():
+                    cur.execute("SELECT * FROM colaborador WHERE id=%s", (int(self.user_id),))
+                else:
+                    cur.execute("SELECT * FROM colaborador WHERE usuario=%s", (self.user_id,))
+
+                row = cur.fetchone()
+                if row:
+                    self.origin = "colaborador"
+
             cur.close()
             conn.close()
 
             if not row:
-                messagebox.showerror("Error", f"Usuario '{self.user_id}' no encontrado.")
+                messagebox.showerror("Error", "Usuario no encontrado")
                 self.destroy()
                 return
 
+            # ----- MAPEO DE CAMPOS -----
+            mapa = {
+                "nombre": "nombre1",
+                "nombre2": "nombre2",
+                "apellido1": "apellido1",
+                "apellido2": "apellido2",
+                "usuario": "usuario",
+                "contrasena": "contrasena",
+                "rol": "rol",
+                "unidad": "unidad"
+            }
+
+            # ----- CARGAR CAMPOS -----
             for key in self.fields:
                 self.fields[key].config(state="normal")
                 self.fields[key].delete(0, tk.END)
-                self.fields[key].insert(0, row.get(key, ""))
+
+                if self.origin == "usuarios":
+                    val = row.get(key, "")
+                else:
+                    columna = mapa.get(key, key)
+                    val = row.get(columna, "")
+
+                self.fields[key].insert(0, val if val else "")
                 self.fields[key].config(state="disabled")
 
-            # 🔹 Mostrar la foto si existe (desde foto_path)
+            # ----- FOTO -----
             if "foto_path" in row and row["foto_path"]:
-                try:
-                    if os.path.exists(row["foto_path"]):
-                        with open(row["foto_path"], "rb") as f:
-                            self.mostrar_foto(f.read())
-                except Exception as e:
-                    print(f"⚠ No se pudo mostrar la foto: {e}")
+                if os.path.exists(row["foto_path"]):
+                    with open(row["foto_path"], "rb") as f:
+                        self.mostrar_foto(f.read())
+                        self.foto_path_actual = row["foto_path"]
 
+            # Solo habilitar si hay fecha_aceptacion y estado de la solicitud es 'aprobada'
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            cur.execute("""
+                SELECT estado, fecha_aceptacion FROM solicitudes_actualizacion
+                WHERE usuario=%s ORDER BY fecha_solicitud DESC LIMIT 1
+            """, (self.user_id,))
+            sol = cur.fetchone()
+            cur.close()
+            conn.close()
 
-            # 🔹 Verificar si está editable
-            if "editable" in row and row["editable"]:
-                self.habilitar_edicion()
-            else:
-                self.lbl_estado.config(text="Los datos están bloqueados. Solicite actualización.", fg="#2c3e50")
-                self.btn_actualizar.config(state="disabled")
-                self.btn_solicitar.config(state="normal")
-
+            if sol:
+                estado_solicitud, fecha_aceptacion = sol
+                if estado_solicitud == "aprobada":
+                    self.habilitar_edicion()
+                    self.lbl_estado.config(text="Solicitud aprobada. Puede editar sus datos.", fg="#27ae60")
+                elif estado_solicitud == "rechazada":
+                    self.lbl_estado.config(text="Solicitud rechazada. No puede editar.", fg="#c0392b")
+                else:
+                    self.lbl_estado.config(text="Datos bloqueados. Solicite actualización.", fg="#2c3e50")
         except Exception as e:
-            messagebox.showerror("Error BD", f"No se pudo cargar el perfil:\n{e}")
+            messagebox.showerror("Error BD", f"No se pudo cargar:\n{e}")
 
     # ---------------- MOSTRAR FOTO ----------------
     def mostrar_foto(self, foto_bytes):
-        """Muestra la foto circular del usuario desde la base de datos."""
         try:
+            if not foto_bytes:
+                return
             image = Image.open(io.BytesIO(foto_bytes)).convert("RGB")
-            image = image.resize((150, 150), Image.LANCZOS)
+            image = image.resize((150,150), Image.LANCZOS)
 
-            # 🔹 Crear máscara circular
-            mask = Image.new("L", (150, 150), 0)
+            mask = Image.new("L", (150,150), 0)
             draw = ImageDraw.Draw(mask)
-            draw.ellipse((0, 0, 150, 150), fill=255)
+            draw.ellipse((0,0,150,150), fill=255)
 
-            result = Image.new("RGBA", (150, 150))
-            result.paste(image, (0, 0), mask=mask)
+            result = Image.new("RGBA",(150,150))
+            result.paste(image,(0,0),mask=mask)
 
             self.foto_img = ImageTk.PhotoImage(result)
             self.foto_label.config(image=self.foto_img, text="")
         except Exception as e:
-            print(f"Error al mostrar foto: {e}")
+            print("Error foto:", e)
 
+    # ---------------- CAMBIAR FOTO ----------------
+    def elegir_foto(self):
+        ruta = filedialog.askopenfilename(
+            title="Seleccionar Foto",
+            filetypes=[("Imagenes","*.jpg *.jpeg *.png")]
+        )
+        if not ruta:
+            return
+
+        with open(ruta,"rb") as f:
+            self.nueva_foto_bytes = f.read()
+
+        self.mostrar_foto(self.nueva_foto_bytes)
+
+    # ---------------- SOLICITAR ACTUALIZACIÓN ----------------
     def solicitar_actualizacion(self):
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
-            cur.execute("INSERT INTO solicitudes_actualizacion (usuario, estado) VALUES (%s, %s)", (self.user_id, 'pendiente'))
-            cur.execute("UPDATE usuarios SET editable = FALSE WHERE usuario = %s", (self.user_id,))
+
+            cur.execute(
+                "INSERT INTO solicitudes_actualizacion (usuario, estado) VALUES (%s, %s)",
+                (self.user_id, "pendiente")
+            )
+
+            tabla = "colaborador" if self.origin=="colaborador" else "usuarios"
+
             conn.commit()
             cur.close()
             conn.close()
-            messagebox.showinfo("Solicitud enviada", "Se ha enviado la solicitud al administrador.")
-            self.lbl_estado.config(text="Solicitud pendiente de aprobación.", fg="#f39c12")
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo enviar la solicitud:\n{e}")
 
+            self.lbl_estado.config(text="Solicitud enviada. Espere aprobación del administrador.", fg="#f39c12")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo enviar:\n{e}")
+
+    # ---------------- HABILITAR EDICIÓN ----------------
     def habilitar_edicion(self):
         for ent in self.fields.values():
             ent.config(state="normal")
-        self.btn_actualizar.config(state="normal")
-        self.lbl_estado.config(text="Edite los datos y presione Actualizar.", fg="#16a085")
 
+        self.btn_actualizar.config(state="normal")
+        self.btn_cambiar_foto.config(state="normal")
+
+    # ---------------- ACTUALIZAR ----------------
     def actualizar(self):
         try:
-            datos = {k: v.get().strip() for k, v in self.fields.items()}
-            if not datos["usuario"] or not datos["nombre"]:
-                messagebox.showwarning("Atención", "Usuario y Nombre 1 son obligatorios.")
-                return
+            datos = {k: v.get().strip() for k,v in self.fields.items()}
+
+            tabla = "colaborador" if self.origin=="colaborador" else "usuarios"
+
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
-            cur.execute("""
-                UPDATE usuarios
-                SET usuario = %s, contrasena = %s, nombre = %s, nombre2 = %s,
-                    apellido1 = %s, apellido2 = %s, rol = %s, unidad = %s, editable = FALSE
-                WHERE usuario = %s
-            """, (datos["usuario"], datos["contrasena"], datos["nombre"], datos["nombre2"],
-                  datos["apellido1"], datos["apellido2"], datos["rol"], datos["unidad"], self.user_id))
+
+            cur.execute(f"""
+                UPDATE {tabla}
+                SET usuario=%s, contrasena=%s, nombre1=%s, nombre2=%s,
+                    apellido1=%s, apellido2=%s, rol=%s, unidad=%s,
+                    editable=FALSE
+                WHERE usuario=%s
+            """, (
+                datos["usuario"], datos["contrasena"], datos["nombre1"], datos["nombre2"],
+                datos["apellido1"], datos["apellido2"], datos["rol"], datos["unidad"],
+                self.user_id
+            ))
+
+            # GUARDAR FOTO NUEVA (si la seleccionó)
+            if self.nueva_foto_bytes:
+                foto_path = f"fotos/{datos['usuario']}.jpg"
+                os.makedirs("fotos", exist_ok=True)
+                with open(foto_path, "wb") as f:
+                    f.write(self.nueva_foto_bytes)
+
+                cur.execute(f"UPDATE {tabla} SET foto_path=%s WHERE usuario=%s",
+                    (foto_path, self.user_id))
+
             conn.commit()
+
+            # Después de guardar cambios:
+            self.btn_actualizar.config(state="disabled")
+            self.btn_cambiar_foto.config(state="disabled")
+            self.lbl_estado.config(text="Perfil actualizado. Solicite otra actualización para más cambios.", fg="#27ae60")
+
+            # Actualizar editable en BD
+            cur.execute("UPDATE colaborador SET editable=FALSE WHERE usuario=%s", (self.user_id,))
+
             cur.close()
             conn.close()
 
             self.btn_actualizar.config(state="disabled")
-            self.btn_solicitar.config(state="disabled")
+            self.btn_cambiar_foto.config(state="disabled")
             self.lbl_estado.config(text="Perfil actualizado correctamente.", fg="#27ae60")
-            self.toast("Perfil actualizado correctamente.", 2200)
 
         except Exception as e:
-            messagebox.showerror("Error BD", f"No se pudo actualizar el perfil:\n{e}")
+            messagebox.showerror("Error BD", f"No se pudo actualizar:\n{e}")
 
-    def toast(self, text, duration=2000):
-        try:
-            toast = tk.Toplevel(self.master)
-            toast.overrideredirect(True)
-            toast.attributes("-topmost", True)
-            frm = tk.Frame(toast, bg="#333333")
-            frm.pack(fill="both", expand=True)
-            tk.Label(frm, text=text, bg="#333333", fg="white", font=("Segoe UI", 9)).pack(padx=12, pady=8)
-            toast.update_idletasks()
-            x = toast.winfo_screenwidth() - 220
-            y = toast.winfo_screenheight() - 80
-            toast.geometry(f"+{x}+{y}")
-            toast.after(duration, toast.destroy)
-        except Exception:
-            messagebox.showinfo("Info", text)
-
-# ---------------- EJEMPLO DE USO ----------------
+# ---------------- EJEMPLO ----------------
 if __name__ == "__main__":
     root = tk.Tk()
     root.withdraw()
-    user_id_test = "noel"
-    try:
-        EditarPerfil(root, user_id=user_id_test)
-        root.mainloop()
-    except Exception as e:
-        messagebox.showerror("Error", f"No se pudo abrir el formulario:\n{e}")
+    EditarPerfil(root, "noel")
+    root.mainloop()

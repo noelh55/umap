@@ -1,10 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import psycopg2
-import subprocess
-import os
-from editardependencia import EditarDependencia
-
+import threading
 
 # ---------------- CONFIGURACIÓN BASE DE DATOS ----------------
 DB_CONFIG = {
@@ -15,99 +12,145 @@ DB_CONFIG = {
     "password": "umap"
 }
 
+
+# ---------------- FUNCIÓN DE TOAST (NOTIFICACIÓN FLOTANTE) ----------------
+def mostrar_toast(master, mensaje):
+    toast = tk.Toplevel(master)
+    toast.overrideredirect(True)
+    toast.configure(bg="#27ae60")
+    toast.attributes("-topmost", True)
+    toast.wm_attributes("-alpha", 0.92)
+
+    label = tk.Label(toast, text=mensaje, bg="#27ae60", fg="white",
+                     font=("Segoe UI", 11, "bold"), padx=20, pady=10)
+    label.pack()
+
+    master.update_idletasks()
+    x = master.winfo_x() + master.winfo_width() - 250
+    y = master.winfo_y() + master.winfo_height() - 100
+    toast.geometry(f"230x50+{x}+{y}")
+
+    def cerrar():
+        toast.destroy()
+
+    threading.Timer(2.0, cerrar).start()
+
+
 # ---------------- VENTANA DE DEPENDENCIAS ----------------
 class VentanaDependencia(tk.Toplevel):
     def __init__(self, master, combobox_dependencias=None):
         super().__init__(master)
-        self.title("Formulario de Dependencias")
-        self.geometry("520x550")
+        self.title("Gestión de Dependencias")
+        self.geometry("600x550")
         self.resizable(False, False)
         self.configure(bg="#ecf0f1")
         self.transient(master)
         self.grab_set()
         self.combobox_dependencias = combobox_dependencias
+        self.dependencia_id = None
 
-        self.init_db()
-        self.crear_widgets()
         self.centrar_ventana()
 
-    # ---------------- CREAR WIDGETS ----------------
-    def crear_widgets(self):
-        # Frame principal
-        self.frame = tk.Frame(self, bg="#ffffff", bd=2, relief="flat")
-        self.frame.pack(fill="both", expand=True, padx=20, pady=20)
-
-        # Estilo
+        # --- Estilos modernos ---
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("TLabel", background="#ffffff", foreground="#2c3e50", font=("Segoe UI", 11))
+        style.configure("TLabel", background="#ecf0f1", foreground="#2c3e50", font=("Segoe UI", 11))
         style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=8, relief="flat")
-        style.map("TButton",
-                  background=[("active", "#16a085"), ("!active", "#1abc9c")],
+        style.map("TButton", background=[("active", "#16a085"), ("!active", "#1abc9c")],
                   foreground=[("active", "white"), ("!active", "white")])
         style.configure("TEntry", font=("Segoe UI", 11))
 
-        # ---------------- TÍTULO ----------------
-        ttk.Label(self.frame, text="Formulario de Dependencias",
-                  font=("Segoe UI", 18, "bold"), background="#ffffff").pack(pady=(10, 20))
+        # --- Frame principal ---
+        self.frame = tk.Frame(self, bg="#ffffff", bd=2, relief="flat")
+        self.frame.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # ---------------- ID + NOMBRE ----------------
+        # --- Título ---
+        title = tk.Label(self.frame, text="Gestión de Dependencias", bg="#ffffff", fg="#2c3e50",
+                         font=("Segoe UI", 18, "bold"))
+        title.pack(pady=(10, 15))
+
+        # --- Nombre ---
         nombre_frame = tk.Frame(self.frame, bg="#ffffff")
         nombre_frame.pack(fill="x", pady=5)
 
-        #tk.Label(nombre_frame, text="ID:", bg="#ffffff", fg="#2c3e50",
-                 #font=("Segoe UI", 11)).grid(row=0, column=0, padx=(0, 5), sticky="w")
-        #self.entry_id = ttk.Entry(nombre_frame, width=8, state="readonly")
-        #self.entry_id.grid(row=0, column=1, padx=(0, 15))
-        #self.generar_id()
-
         tk.Label(nombre_frame, text="Nombre de la dependencia:", bg="#ffffff", fg="#2c3e50",
-                 font=("Segoe UI", 11)).grid(row=0, column=2, sticky="w")
-        self.entry_nombre = ttk.Entry(nombre_frame)
-        self.entry_nombre.grid(row=0, column=3, sticky="ew", padx=(5, 0))
-        nombre_frame.columnconfigure(3, weight=1)
+                 font=("Segoe UI", 11)).grid(row=0, column=0, sticky="w")
+        self.entry_nombre = ttk.Entry(nombre_frame, state="normal")
+        self.entry_nombre.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        nombre_frame.columnconfigure(1, weight=1)
 
-        # ---------------- DESCRIPCIÓN ----------------
-        tk.Label(self.frame, text="Descripción:", bg="#ffffff", fg="#2c3e50",
-                 font=("Segoe UI", 11)).pack(anchor="w", pady=(10, 0))
-        self.text_descripcion = tk.Text(self.frame, height=6, font=("Segoe UI", 11),
-                                        bd=1, relief="solid", wrap="word")
-        self.text_descripcion.pack(fill="both", pady=8)
+        # --- Descripción ---
+        desc_frame = tk.Frame(self.frame, bg="#ffffff")
+        desc_frame.pack(fill="x", pady=5)
 
-        # ---------------- BOTONES PRINCIPALES ----------------
+        tk.Label(desc_frame, text="Descripción:", bg="#ffffff", fg="#2c3e50",
+                 font=("Segoe UI", 11)).grid(row=0, column=0, sticky="w")
+        self.entry_descripcion = ttk.Entry(desc_frame, state="normal")
+        self.entry_descripcion.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        desc_frame.columnconfigure(1, weight=1)
+
+        # ===================== TABLA DE DEPENDENCIAS =====================
+        tabla_frame = tk.Frame(self.frame, bg="#ffffff")
+        tabla_frame.pack(fill="both", expand=True, pady=(10, 5))
+
+        tk.Label(tabla_frame, text="Dependencias Registradas", bg="#ffffff", fg="#2c3e50",
+                 font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=5, pady=(0, 5))
+
+        self.tree = ttk.Treeview(tabla_frame, columns=("ID", "Nombre", "Descripción"),
+                                 show="headings", height=6)
+        self.tree.heading("ID", text="ID")
+        self.tree.heading("Nombre", text="Nombre")
+        self.tree.heading("Descripción", text="Descripción")
+        self.tree.column("ID", width=50, anchor="center")
+        self.tree.column("Nombre", width=180)
+        self.tree.column("Descripción", width=250)
+
+        vsb = ttk.Scrollbar(tabla_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        self.tree.bind("<Double-1>", self.mostrar_en_campos)
+
+        # ===================== BOTONES DEBAJO DE LA TABLA =====================
         btn_frame = tk.Frame(self.frame, bg="#ffffff")
         btn_frame.pack(pady=15, fill="x")
 
-        btn_guardar = tk.Button(
-            btn_frame, text="💾 Guardar", bg="#1abc9c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=self.guardar
-        )
-        btn_guardar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
+        self.btn_guardar = tk.Button(btn_frame, text="💾 Guardar", bg="#1abc9c", fg="white",
+                                     font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                                     command=self.guardar)
+        self.btn_guardar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
-        btn_limpiar = tk.Button(
-            btn_frame, text="🧹 Limpiar", bg="#3498db", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=self.limpiar
-        )
-        btn_limpiar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
+        self.btn_editar = tk.Button(btn_frame, text="✏️ Editar", bg="#3498db", fg="white",
+                                    font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                                    command=self.habilitar_edicion, state="disabled")
+        self.btn_editar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
-        btn_cerrar = tk.Button(
-            btn_frame, text="❌ Cerrar", bg="#e74c3c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=self.destroy
-        )
+        self.btn_actualizar = tk.Button(btn_frame, text="🔄 Actualizar", bg="#f39c12", fg="white",
+                                        font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                                        command=self.actualizar, state="disabled")
+        self.btn_actualizar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
+
+        btn_cerrar = tk.Button(btn_frame, text="❌ Cerrar", bg="#e74c3c", fg="white",
+                               font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                               command=self.destroy)
         btn_cerrar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
-        # ---------------- VER DEPENDENCIAS ----------------
-        btn_ver = tk.Button(
-            self.frame, text="👁️ Ver Dependencias Registradas", bg="#16a085", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=self.ver_dependencias
-        )
-        btn_ver.pack(fill="x", pady=(10, 5), ipadx=5, ipady=6)
+        # --- Inicializar ---
+        self.init_db()
+        self.cargar_dependencias()
 
-    # ---------------- BASE DE DATOS ----------------
+    # ---------------- FUNCIONES ----------------
+    def centrar_ventana(self):
+        self.update_idletasks()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        ws = self.winfo_screenwidth()
+        hs = self.winfo_screenheight()
+        x = (ws // 2) - (w // 2)
+        y = (hs // 2) - (h // 2)
+        self.geometry(f"+{x}+{y}")
+
     def init_db(self):
         try:
             conn = psycopg2.connect(**DB_CONFIG)
@@ -124,55 +167,24 @@ class VentanaDependencia(tk.Toplevel):
         except Exception as e:
             messagebox.showerror("Error BD", f"No se pudo inicializar la tabla:\n{e}")
 
-    # ---------------- CENTRAR VENTANA ----------------
-    def centrar_ventana(self):
-        self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
-        ws = self.winfo_screenwidth()
-        hs = self.winfo_screenheight()
-        x = (ws // 2) - (w // 2)
-        y = (hs // 2) - (h // 2)
-        self.geometry(f"{w}x{h}+{x}+{y}")
-
-    # ---------------- GENERAR ID ----------------
-    def generar_id(self):
-        try:
-            conn = psycopg2.connect(**DB_CONFIG)
-            cur = conn.cursor()
-            cur.execute("SELECT COALESCE(MAX(id), 0)+1 FROM dependencias")
-            next_id = cur.fetchone()[0]
-            conn.close()
-            self.entry_id.config(state="normal")
-            self.entry_id.delete(0, tk.END)
-            self.entry_id.insert(0, str(next_id))
-            self.entry_id.config(state="readonly")
-        except Exception as e:
-            messagebox.showerror("Error BD", f"No se pudo generar ID:\n{e}")
-
-    # ---------------- GUARDAR ----------------
     def guardar(self):
         nombre = self.entry_nombre.get().strip()
-        descripcion = self.text_descripcion.get("1.0", tk.END).strip()
-
+        descripcion = self.entry_descripcion.get().strip()
         if not nombre:
             messagebox.showwarning("Atención", "Debe ingresar el nombre de la dependencia.")
             return
-
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO dependencias(nombre, descripcion) VALUES (%s, %s) RETURNING id",
-                (nombre, descripcion)
-            )
+            cur.execute("INSERT INTO dependencias(nombre, descripcion) VALUES (%s, %s) RETURNING id",
+                        (nombre, descripcion))
             dep_id = cur.fetchone()[0]
             conn.commit()
             conn.close()
 
-            messagebox.showinfo("Éxito", f"Dependencia guardada correctamente.\nID asignado: {dep_id}")
+            mostrar_toast(self, "Dependencia guardada correctamente ✅")
             self.limpiar()
-            self.generar_id()
+            self.cargar_dependencias()
 
             if self.combobox_dependencias:
                 current_values = list(self.combobox_dependencias['values'])
@@ -186,89 +198,86 @@ class VentanaDependencia(tk.Toplevel):
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo guardar en la base de datos:\n{e}")
 
-    # ---------------- LIMPIAR ----------------
     def limpiar(self):
+        self.entry_nombre.config(state="normal")
+        self.entry_descripcion.config(state="normal")
         self.entry_nombre.delete(0, tk.END)
-        self.text_descripcion.delete("1.0", tk.END)
+        self.entry_descripcion.delete(0, tk.END)
+        self.btn_actualizar.config(state="disabled")
+        self.btn_guardar.config(state="normal")
+        self.btn_editar.config(state="disabled")
+        self.dependencia_id = None
 
-    # ---------------- VER DEPENDENCIAS ----------------
-    def ver_dependencias(self):
+    def cargar_dependencias(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
             cur.execute("SELECT id, nombre, descripcion FROM dependencias ORDER BY id")
-            deps = cur.fetchall()
+            for d in cur.fetchall():
+                self.tree.insert("", "end", values=d)
             conn.close()
         except Exception as e:
-            messagebox.showerror("Error BD", f"No se pudieron obtener las dependencias:\n{e}")
+            messagebox.showerror("Error", f"No se pudieron cargar las dependencias:\n{e}")
+
+    def mostrar_en_campos(self, event):
+        selected = self.tree.selection()
+        if not selected:
             return
+        item = self.tree.item(selected[0], "values")
+        self.dependencia_id, nombre, descripcion = item
 
-        if not deps:
-            messagebox.showinfo("Información", "No hay dependencias registradas.")
+        self.entry_nombre.config(state="normal")
+        self.entry_descripcion.config(state="normal")
+        self.entry_nombre.delete(0, tk.END)
+        self.entry_descripcion.delete(0, tk.END)
+        self.entry_nombre.insert(0, nombre)
+        self.entry_descripcion.insert(0, descripcion)
+        self.entry_nombre.config(state="disabled")
+        self.entry_descripcion.config(state="disabled")
+
+        self.btn_editar.config(state="normal")
+        self.btn_actualizar.config(state="disabled")
+        self.btn_guardar.config(state="disabled")
+
+    def habilitar_edicion(self):
+        if not self.dependencia_id:
+            messagebox.showwarning("Atención", "Debe seleccionar una dependencia para editar.")
             return
+        self.entry_nombre.config(state="normal")
+        self.entry_descripcion.config(state="normal")
+        self.btn_actualizar.config(state="normal")
+        self.btn_guardar.config(state="disabled")
+        self.btn_editar.config(state="disabled")
 
-        ver_win = tk.Toplevel(self)
-        ver_win.title("Lista de Dependencias")
-        ver_win.geometry("500x350")
-        ver_win.configure(bg="#ecf0f1")
-        ver_win.transient(self)
-        ver_win.grab_set()
+    def actualizar(self):
+        if not self.dependencia_id:
+            messagebox.showwarning("Atención", "No hay dependencia seleccionada.")
+            return
+        nombre = self.entry_nombre.get().strip()
+        descripcion = self.entry_descripcion.get().strip()
+        if not nombre:
+            messagebox.showwarning("Atención", "Debe ingresar el nombre de la dependencia.")
+            return
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE dependencias
+                SET nombre = %s, descripcion = %s
+                WHERE id = %s
+            """, (nombre, descripcion, self.dependencia_id))
+            conn.commit()
+            conn.close()
 
-        tk.Label(
-            ver_win, text="Dependencias Registradas",
-            bg="#ecf0f1", fg="#2c3e50", font=("Segoe UI", 14, "bold")
-        ).pack(pady=10)
+            mostrar_toast(self, "Actualizado correctamente ✅")
+            self.limpiar()
+            self.cargar_dependencias()
 
-        frame_tabla = tk.Frame(ver_win, bg="#ffffff", bd=1, relief="solid")
-        frame_tabla.pack(fill="both", expand=True, padx=10, pady=10)
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo actualizar:\n{e}")
 
-        tree = ttk.Treeview(frame_tabla, columns=("ID", "Nombre", "Descripción"), show="headings", height=10)
-        tree.heading("ID", text="ID")
-        tree.heading("Nombre", text="Nombre")
-        tree.heading("Descripción", text="Descripción")
-        tree.column("ID", width=50, anchor="center")
-        tree.column("Nombre", width=150)
-        tree.column("Descripción", width=260)
-
-        vsb = ttk.Scrollbar(frame_tabla, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set)
-        tree.pack(side="left", fill="both", expand=True)
-        vsb.pack(side="right", fill="y")
-
-        for d in deps:
-            tree.insert("", "end", values=d)
-
-        # --- Botones de acción ---
-        btn_frame = tk.Frame(ver_win, bg="#ecf0f1")
-        btn_frame.pack(fill="x", pady=10)
-
-        def editar_dependencia():
-            selected = tree.selection()
-            if not selected:
-                messagebox.showwarning("Atención", "Debe seleccionar una dependencia para editar.")
-                return
-            item = tree.item(selected[0], "values")
-            dep_id, nombre, descripcion = item
-
-            ver_win.destroy()
-            self.destroy()
-
-            from editardependencia import EditarDependencia
-            EditarDependencia(self.master, dep_id, nombre, descripcion)
-
-        btn_editar = tk.Button(
-            btn_frame, text="✏️ Editar Dependencia", bg="#1abc9c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=editar_dependencia
-        )
-        btn_editar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
-
-        btn_cerrar = tk.Button(
-            btn_frame, text="❌ Cerrar", bg="#e74c3c", fg="white",
-            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-            command=ver_win.destroy
-        )
-        btn_cerrar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
 # ---------------- EJEMPLO DE USO ----------------
 if __name__ == "__main__":
@@ -279,6 +288,7 @@ if __name__ == "__main__":
     combo = ttk.Combobox(root, values=["Finanzas", "Infraestructura"])
     combo.pack(pady=20)
 
-    ttk.Button(root, text="Agregar Dependencia", command=lambda: VentanaDependencia(root, combobox_dependencias=combo)).pack(pady=10)
+    ttk.Button(root, text="Abrir Gestión de Dependencias",
+               command=lambda: VentanaDependencia(root, combobox_dependencias=combo)).pack(pady=10)
 
     root.mainloop()

@@ -15,6 +15,8 @@ import matplotlib
 matplotlib.use("TkAgg")  # FORZAR Tkinter backend
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from admin_permisos import SolicitudesFlotante
+from reportec import ReporteEmpleados
 
 # ---------- COLORES DEL DISEÑO MODERNO ----------
 BG = "#ecf0f1"       # Fondo principal
@@ -63,6 +65,13 @@ class PantallaPrincipal:
         # --- Construir interfaz ---
         self.crear_panel_lateral()
         self.crear_panel_principal()
+        #self.mostrar_solicitud()  # o el método donde cargas por primera vez
+        self.cargar_solicitudes()
+        self.actualizar_solicitudes_auto()
+        
+        self.cargar_solicitudes_vacaciones()
+        self.cargar_solicitudes_permisos()
+        self.actualizar_tabla_solicitudes()
 
         # --- Notificación de bienvenida solo al loguearse ---
         if self.mostrar_toast_bienvenida:
@@ -112,9 +121,9 @@ class PantallaPrincipal:
             ("👨🏼‍💻 Dependencias", self.abrir_dependencia),
             ("👥 Ver Colaboradores", self.abrir_ver_usuario),
             ("📆 Ausencias", self.mostrar_info_sistema),
-            ("📊 Reportes(Contrato)", self.mostrar_dashboard),
+            ("📊 Reportes", self.mostrar_dashboard),
             ("📑 Contrato", self.mostrar_contrato),
-            ("📋 Informes de Pago", self.hacer_solicitudes),
+            ("📋 Reporte AV", self.hacer_solicitudes),
             ("📜 Perfiles", self.mostrar_perfiles),
             ("🔚 Salir", self.volver_login)
         ]
@@ -188,10 +197,12 @@ class PantallaPrincipal:
         container.pack(fill="both", expand=True)
 
         # ---------- CUADROS SUPERIORES ----------
+        conteos = self.obtener_conteos_contrato()
+
         cuadros_data = [
-            ("📅 Colaboradores", "40", "#1abc9c"),
-            ("🏖️ Contrato Especial", "10", "#3498db"),
-            ("🕒 Contrato Jornal", self.calcular_dias_contrato(), "#e67e22"),
+            ("📅 Colaboradores", str(conteos["Permanente"]), "#1abc9c"),
+            ("🏖️ Contrato Especial", str(conteos["Especial"]), "#3498db"),
+            ("🕒 Contrato Jornal", str(conteos["Jornal"]), "#e67e22"),
             ("👥 Total Colaboradores", self.contar_empleados(), "#9b59b6"),
         ]
 
@@ -219,20 +230,124 @@ class PantallaPrincipal:
         columnas = ("#", "identidad", "usuario", "tipo", "cargo", "dependencia","fecha", "estado", "ver")
         encabezados = ["#", "Identidad", "Usuario", "Tipo Solicitud", "cargo", "dependencia", "fecha","Estado", "👁️"]
 
+        tabla_frame.columnconfigure(0, weight=1)
+        tabla_frame.rowconfigure(0, weight=1)
+
+        # --- NUEVA TABLA DE SOLICITUDES DESDE BD ---
         self.tree = ttk.Treeview(tabla_frame, columns=columnas, show="headings", height=10)
+        self.tree.tag_configure("pendiente", background="#E6E6E6")
         for col, texto in zip(columnas, encabezados):
             self.tree.heading(col, text=texto)
             self.tree.column(col, anchor="center", width=130)
-        self.tree.column("#", width=40)  # más estrecha para el número
-        self.tree.column("ver", width=50)  # mantienes tu columna ver pequeña
+        self.tree.column("#", width=40)
+        self.tree.column("ver", width=50)
 
         vsb = ttk.Scrollbar(tabla_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
 
-        tabla_frame.columnconfigure(0, weight=1)
-        tabla_frame.rowconfigure(0, weight=1)
+       # --- Obtener solicitudes de la base de datos ---
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+
+            # 1. VACACIONES
+            cur.execute("""
+                SELECT 
+                    v.id,
+                    v.identidad,
+                    v.nombre_completo,
+                    'Vacaciones' AS tipo,
+                    v.fecha_inicio,
+                    v.estado,
+                    c.cargo,
+                    c.dependencia
+                FROM vacaciones v
+                LEFT JOIN colaborador c ON c.identidad = v.identidad
+                ORDER BY v.creado_en DESC;
+            """)
+            vacaciones = cur.fetchall()
+
+            # 2. PERMISOS
+            cur.execute("""
+                SELECT
+                    p.id,
+                    p.identidad,
+                    p.nombre_completo,
+                    p.tipo_permiso AS tipo,
+                    p.fecha_inicio,
+                    p.estado,
+                    c.cargo,
+                    c.dependencia
+                FROM permisos_dias_laborales p
+                LEFT JOIN colaborador c ON c.identidad = p.identidad
+                ORDER BY p.creado_en DESC;
+            """)
+            permisos = cur.fetchall()
+
+            conn.close()
+
+            todas_solicitudes = vacaciones + permisos
+
+            # LIMPIAR TABLA ANTES DE CARGAR
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
+            # INSERTAR
+            for i, row in enumerate(todas_solicitudes, 1):
+                """
+                row =
+                0 id
+                1 identidad
+                2 nombre_completo
+                3 tipo (Vacaciones / Permiso)
+                4 fecha_inicio
+                5 estado
+                6 cargo
+                7 dependencia
+               """
+
+                estado = row[5].lower()
+
+                if estado == "pendiente":
+                    tag = "pendiente"
+                elif estado == "aceptado":
+                    tag = "aceptado"
+                elif estado == "rechazado":
+                    tag = "rechazado"
+                else:
+                    tag = ""
+
+                self.tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        i,
+                        row[1],            # identidad
+                        row[2],            # usuario
+                        row[3],            # tipo solicitud
+                        row[6],            # cargo
+                        row[7],            # dependencia
+                        str(row[4]),       # fecha
+                        row[5],            # estado
+                        "👁"               # icono para ver detalle
+                    ),
+                    tags=(tag,)
+                )
+
+            # Colores
+            self.tree.tag_configure('pendiente', background='#d3d3d3')
+            self.tree.tag_configure('aceptado', background='#a8e6a1')
+            self.tree.tag_configure('rechazado', background='#f5a1a1')
+
+            # ACTUALIZAR CADA MINUTO
+            self.root.after(60000, self.cargar_solicitudes)
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudieron cargar solicitudes:\n{e}")
+
+        # --- Bind para ver detalle ---
+        self.tree.bind("<Double-1>", self.ver_detalle_solicitud)
 
         self.tree.bind("<Double-1>", self.ver_detalle_solicitud)
 
@@ -280,10 +395,32 @@ class PantallaPrincipal:
         nuevo_cuadro_container.pack(side="left", padx=6, pady=10)
         nuevo_cuadro_container.pack_propagate(False)
 
-        nuevo_cuadros_data = [
-            ("🏖️Vacaciones /3", "🕒 Ausencias /2", "#1abc9c"),
-        ]
+        # --- Calcular totales de vacaciones y permisos ---
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
 
+            # Total Vacaciones
+            cur.execute("SELECT COUNT(*) FROM vacaciones;")
+            self.total_vacaciones = cur.fetchone()[0]
+
+            # Total Permisos
+            cur.execute("SELECT COUNT(*) FROM permisos_dias_laborales;")
+            self.total_permisos = cur.fetchone()[0]
+
+            conn.close()
+        except Exception as e:
+            self.total_vacaciones = 0
+            self.total_permisos = 0
+            print(f"[ERROR] No se pudieron obtener los totales: {e}")
+
+        # Lista de datos para mostrar
+        nuevo_cuadros_data = [
+            (f"🏖️ Vacaciones / {self.total_vacaciones}",
+             f"🕒 Ausencias / {self.total_permisos}",
+            "#1abc9c")
+        ]
+        
         for i, (titulo, valor, color) in enumerate(nuevo_cuadros_data):
             frame = tk.Frame(nuevo_cuadro_container, bg=color, width=240, height=100)
             frame.pack(expand=True, fill="both")
@@ -304,6 +441,65 @@ class PantallaPrincipal:
         ).pack(side="right", anchor="se", padx=15, pady=8)
 
     # ---------- FUNCIONES AUXILIARES ----------
+    def actualizar_tabla_solicitudes(self):
+        try:
+            # Limpiar la tabla
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
+            # Unir vacaciones + permisos
+            solicitudes = []
+
+            for v in self.vacaciones:
+                solicitudes.append((
+                    v[0],        # id
+                    v[1],        # identidad
+                    v[2],        # nombre
+                    "Vacación",
+                    v[8],        # cargo
+                    v[9],        # dependencia
+                    str(v[4]),   # fecha_inicio
+                    v[6],        # estado
+                    ""           # sin adjunto
+                ))
+
+            for p in self.permisos:
+                solicitudes.append((
+                    p[0],        # id
+                    p[1],        # identidad
+                    p[2],        # nombre
+                    p[3],        # tipo permiso
+                    p[8],        # cargo
+                    p[9],        # dependencia
+                    str(p[4]),   # fecha_inicio
+                    p[6],        # estado
+                    p[7]         # adjunto
+                ))
+
+            # Insertar en tabla
+            for i, row in enumerate(solicitudes, 1):
+                self.tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        i,
+                        row[1],
+                        row[2],
+                        row[3],
+                        row[4],
+                        row[5],
+                        row[6],
+                        row[7],
+                        row[8]  # adjunto
+                    ),
+                    tags=("pendiente",)
+                )
+
+            self.tree.tag_configure("pendiente", background="#d3d3d3")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo actualizar la tabla: {e}")
+
     def calcular_dias_contrato(self):
         inicio = date(date.today().year, 1, 1)
         fin = date(date.today().year, 12, 31)
@@ -318,21 +514,130 @@ class PantallaPrincipal:
         try:
             conn = self.conectar_bd()
             cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM usuarios;")
+            cur.execute("SELECT COUNT(*) FROM colaborador;")
             total = cur.fetchone()[0]
             conn.close()
             return str(total)
         except Exception:
             return "0"
+        
+    def cargar_solicitudes(self):
+        try:
+            self.cargar_solicitudes_vacaciones()
+            self.cargar_solicitudes_permisos()
+
+            todas_solicitudes = self.vacaciones + self.permisos
+
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
+            for i, row in enumerate(todas_solicitudes, 1):
+                estado = str(row[5] or "").lower()  # <-- cambio aquí
+
+                if estado == "pendiente":
+                    tag = "pendiente"
+                elif estado == "aceptado":
+                    tag = "aceptado"
+                elif estado == "rechazado":
+                    tag = "rechazado"
+                else:
+                    tag = ""
+                    
+                self.tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        i,              # Número
+                        row[1],         # identidad
+                        row[2],         # usuario
+                        row[3],         # tipo solicitud
+                        row[8],         # cargo 
+                        row[9],         # dependencia
+                        str(row[4]),    # fecha
+                        row[6],         # estado
+                        row[7]          # adjunto
+                    ),
+                    tags=("pendiente",)
+                )
+
+            self.tree.tag_configure('pendiente', background='#d3d3d3')
+            self.tree.tag_configure('aceptado', background='#a8e6a1')
+            self.tree.tag_configure('rechazado', background='#f5a1a1')
+
+            # Llamada recursiva cada minuto
+            self.root.after(60000, self.cargar_solicitudes)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar solicitudes: {e}")
 
     # Evitar mensajes "while executing ..." en la consola
     def suppress_tk_errors(*args):
         pass
     tk.Tk.report_callback_exception = suppress_tk_errors
 
+    def cargar_solicitudes_vacaciones(self):
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT 
+                    v.id,
+                    v.identidad,
+                    v.nombre_completo,
+                    'Vacaciones' AS tipo,
+                    v.fecha_inicio,
+                    v.dias_solicitados,
+                    v.estado,
+                    '' AS constancia_path,         -- Vacaciones NO tienen adjunto
+                    c.cargo,
+                    c.dependencia
+                FROM vacaciones v
+                LEFT JOIN colaborador c ON c.identidad = v.identidad
+                WHERE v.estado = 'pendiente'
+                ORDER BY v.creado_en DESC;
+            """)
+            self.vacaciones = cur.fetchall()
+            conn.close()
+        except Exception as e:
+            self.vacaciones = []
+            print(f"[ERROR] No se pudieron cargar vacaciones: {e}")
+
+    def cargar_solicitudes_permisos(self):
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT
+                    p.id,
+                    p.identidad,
+                    p.nombre_completo,
+                    p.tipo_permiso AS tipo,
+                    p.fecha_inicio,
+                    p.dias_solicitados,
+                    p.estado,
+                    p.constancia_path,
+                    c.cargo,
+                    c.dependencia
+                FROM permisos_dias_laborales p
+                LEFT JOIN colaborador c ON c.identidad = p.identidad
+                WHERE p.estado = 'pendiente'
+                ORDER BY p.creado_en DESC;
+            """)
+            self.permisos = cur.fetchall()
+            conn.close()
+        except Exception as e:
+            self.permisos = []
+            print(f"[ERROR] No se pudieron cargar permisos: {e}")
+
+    def actualizar_solicitudes_auto(self):
+        self.cargar_solicitudes_vacaciones()
+        self.cargar_solicitudes_permisos()
+        self.actualizar_tabla_solicitudes()  # donde llenas el treeview
+        self.after_actualizar = self.root.after(60000, self.actualizar_solicitudes_auto)
+
     def mostrar_dashboard(self):
         from reportec import ReporteEmpleados
-        ReporteEmpleados(self.root)
+        ReporteEmpleados(self.root)  # Pasa el root principal como master
     
     # ✅ FUNCIONALIDAD CORRECTA: Mostrar Contrato SIN cerrar el Main
     def mostrar_contrato(self):
@@ -354,22 +659,41 @@ class PantallaPrincipal:
         VentanaCargo(self.root)
     
     def hacer_solicitudes(self):
-        messagebox.showinfo("Informe", "Aquí se abriría el formulario de Informes de Pago.")
+        from reportes import ReportesWindow
+        ReportesWindow(self.root)   # <-- DEBE SER SELF
 
     def abrir_dependencia(self):
         from dependencia import VentanaDependencia
         VentanaDependencia(self.root)
 
     def mostrar_info_sistema(self):
-        messagebox.showinfo("Ausencias", "Aquí se abriría el formulario de ausencias.")
+        try:
+            # Pasar self.root como master, no self
+            win = SolicitudesFlotante(master=self.root)
+            win.grab_set()  # modal opcional
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo abrir el formulario:\n{e}")
 
     def volver_login(self):
         global MOSTRAR_BIENVENIDA
         MOSTRAR_BIENVENIDA = True
+
+        # Ejecutar login una sola vez
         script_path = os.path.abspath("log.py")
         subprocess.Popen([sys.executable, script_path])
-        self.root.after(100, lambda: subprocess.Popen([sys.executable, script_path]))
-        self._cerrar()  # Cancela callbacks y destruye root de forma segura
+
+        # Cancelar callbacks after si existen
+        try:
+            self.root.after_cancel(self.after_cargar)
+        except:
+            pass
+        try:
+            self.root.after_cancel(self.after_actualizar)
+        except:
+            pass
+
+        # Cerrar esta ventana
+        self.root.destroy()
         sys.exit()
 
     def abrir_colaborador(self):
@@ -388,17 +712,113 @@ class PantallaPrincipal:
         item = self.tree.selection()
         if not item:
             return
-        datos = self.tree.item(item, "values")
-        detalle = tk.Toplevel(self.root)
-        detalle.title(f"Solicitud #{datos[0]}")
-        detalle.geometry("400x300")
 
-        ttk.Label(detalle, text=f"👤 Usuario: {datos[1]}", font=("Segoe UI", 11)).pack(pady=5)
-        ttk.Label(detalle, text=f"📋 Tipo: {datos[2]}", font=("Segoe UI", 11)).pack(pady=5)
-        ttk.Label(detalle, text=f"📅 Fecha: {datos[3]}", font=("Segoe UI", 11)).pack(pady=5)
-        ttk.Label(detalle, text=f"📝 Descripción:", font=("Segoe UI", 11, "bold")).pack(pady=5)
-        tk.Message(detalle, text=datos[4], width=350).pack(pady=5)
-        ttk.Label(detalle, text=f"🔖 Estado: {datos[5]}", font=("Segoe UI", 11)).pack(pady=10)
+        datos = self.tree.item(item, "values")
+
+        # Desglosar los valores según columnas:
+        numero = datos[0]
+        identidad = datos[1]
+        usuario = datos[2]
+        tipo = datos[3]
+        cargo = datos[4]
+        dependencia = datos[5]
+        fecha = datos[6]
+        estado = datos[7]
+
+        # Traducir a nombre bonito
+        tipo_legible = "Vacación" if tipo.lower() == "vacaciones" else "Ausencia"
+
+        # Crear ventana
+        detalle = tk.Toplevel(self.root)
+        detalle.title(f"Detalle de Solicitud #{numero}")
+        detalle.configure(bg="#F5F5F5")
+
+        # Ajustar tamaño dinámico
+        detalle.update_idletasks()
+        width = 600      # más ancho para permitir dos columnas
+        height = 420
+        x = (detalle.winfo_screenwidth() // 2) - (width // 2)
+        y = (detalle.winfo_screenheight() // 2) - (height // 2)
+        detalle.geometry(f"{width}x{height}+{x}+{y}")
+        detalle.resizable(False, False)
+
+        # Marco principal
+        frame = tk.Frame(detalle, bg="white", bd=2, relief="groove")
+        frame.place(relx=0.5, rely=0.5, anchor="center", width=560, height=380)
+
+        # Título
+        ttk.Label(
+            frame,
+            text=f"Solicitud #{numero}",
+            font=("Segoe UI", 15, "bold")
+        ).pack(pady=8)
+
+        # Información a mostrar
+        info = [
+            ("👤 Usuario:", usuario),
+            ("🆔 Identidad:", identidad),
+            ("📋 Tipo:", tipo_legible),
+            ("💼 Cargo:", cargo),
+            ("🏢 Dependencia:", dependencia),
+            ("📅 Fecha:", fecha),
+            ("🔖 Estado:", estado.capitalize())
+        ]
+
+        # FRAME para organizar en columnas
+        container = tk.Frame(frame, bg="white")
+        container.pack(pady=10)
+
+        # Determinar si usar 1 o 2 columnas dependiendo del tamaño de texto
+        usar_dos_columnas = any(len(valor) > 22 for _, valor in info)
+
+        if usar_dos_columnas:
+            # Crear dos columnas
+            col1 = tk.Frame(container, bg="white")
+            col2 = tk.Frame(container, bg="white")
+            col1.grid(row=0, column=0, padx=10, sticky="n")
+            col2.grid(row=0, column=1, padx=10, sticky="n")
+
+            mitad = len(info) // 2 + (len(info) % 2)
+            columna_1_items = info[:mitad]
+            columna_2_items = info[mitad:]
+
+            for label_text, valor in columna_1_items:
+                f = tk.Frame(col1, bg="white")
+                f.pack(anchor="w", pady=5)
+                tk.Label(f, text=label_text, font=("Segoe UI", 11, "bold"), bg="white").pack(anchor="w")
+                tk.Label(f, text=valor, font=("Segoe UI", 11), bg="white", fg="#333").pack(anchor="w")
+
+            for label_text, valor in columna_2_items:
+                f = tk.Frame(col2, bg="white")
+                f.pack(anchor="w", pady=5)
+                tk.Label(f, text=label_text, font=("Segoe UI", 11, "bold"), bg="white").pack(anchor="w")
+                tk.Label(f, text=valor, font=("Segoe UI", 11), bg="white", fg="#333").pack(anchor="w")
+
+        else:
+            # Una sola columna
+            for label_text, valor in info:
+                f = tk.Frame(container, bg="white")
+                f.pack(anchor="w", pady=5)
+                tk.Label(f, text=label_text, font=("Segoe UI", 11, "bold"), bg="white").pack(anchor="w")
+                tk.Label(f, text=valor, font=("Segoe UI", 11), bg="white", fg="#333").pack(anchor="w")
+
+        # Recuperar adjunto (último valor enviado)
+        adjunto = datos[8] if len(datos) > 8 else ""
+
+        # Frame de botones
+        botonera = tk.Frame(frame, bg="white")
+        botonera.pack(pady=10)
+
+        # Botón ver adjunto (solo si existe)
+        if adjunto and os.path.exists(adjunto):
+            ttk.Button(
+                botonera,
+                text="📄 Ver adjunto",
+                command=lambda: os.startfile(adjunto)
+            ).pack(pady=5)
+
+        # Botón cerrar
+        ttk.Button(botonera, text="Cerrar", command=detalle.destroy).pack(pady=5)
 
     # ---------- NOTIFICACIÓN TIPO TOAST SEGURA ----------
     def mostrar_notificacion(self, mensaje):
@@ -460,6 +880,35 @@ class PantallaPrincipal:
         if hasattr(self, "toast") and self.toast.winfo_exists():
             self.toast.destroy()
             self.root.destroy()
+
+    def obtener_conteos_contrato(self):
+        conteos = {
+            "Permanente": 0,
+            "Especial": 0,
+           "Jornal": 0
+        }
+
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT tipo_contrato, COUNT(*) 
+                FROM colaborador 
+                GROUP BY tipo_contrato;
+            """)
+
+            for tipo, total in cur.fetchall():
+                if tipo in conteos:
+                    conteos[tipo] += total
+
+            cur.close()
+            conn.close()
+
+        except Exception as e:
+            print(f"[ERROR] No se pudieron obtener los conteos: {e}")
+
+        return conteos
 
 # ---------- MAIN ----------
 if __name__ == "__main__":

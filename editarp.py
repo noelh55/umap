@@ -71,7 +71,7 @@ class EditarP(tk.Toplevel):
         labels = [
             ("Usuario", "usuario"),
             ("Contraseña", "contrasena"),
-            ("Nombre 1", "nombre"),
+            ("Nombre 1", "nombre1"),
             ("Nombre 2", "nombre2"),
             ("Apellido 1", "apellido1"),
             ("Apellido 2", "apellido2"),
@@ -111,7 +111,7 @@ class EditarP(tk.Toplevel):
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            cur.execute("SELECT * FROM usuarios WHERE id = %s", (self.user_id,))
+            cur.execute("SELECT * FROM colaborador WHERE id = %s", (self.user_id,))
             row = cur.fetchone()
             cur.close()
             conn.close()
@@ -164,18 +164,18 @@ class EditarP(tk.Toplevel):
         """Actualiza los datos del usuario en la base de datos."""
         try:
             datos = {k: v.get().strip() for k, v in self.fields.items()}
-            if not datos["usuario"] or not datos["nombre"]:
+            if not datos["usuario"] or not datos["nombre1"]:
                 messagebox.showwarning("Atención", "Usuario y Nombre 1 son obligatorios.")
                 return
 
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
             cur.execute("""
-                UPDATE usuarios
-                SET usuario = %s, contrasena = %s, nombre = %s, nombre2 = %s,
+                UPDATE colaborador
+                SET usuario = %s, contrasena = %s, nombre1 = %s, nombre2 = %s,
                     apellido1 = %s, apellido2 = %s, rol = %s, unidad = %s
                 WHERE id = %s
-            """, (datos["usuario"], datos["contrasena"], datos["nombre"], datos["nombre2"],
+            """, (datos["usuario"], datos["contrasena"], datos["nombre1"], datos["nombre2"],
                   datos["apellido1"], datos["apellido2"], datos["rol"], datos["unidad"], self.user_id))
             conn.commit()
             cur.close()

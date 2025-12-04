@@ -180,6 +180,15 @@ class ColaboradorWindow:
         columnas = ("#", "id", "identidad", "nombre", "tipo_contrato", "dependencia", "cargo",
                     "fecha_inicio", "fecha_fin", "sueldo", "estado")
         self.tree = ttk.Treeview(tabla_frame, columns=columnas, show="headings", height=12)
+        # --- Estilo de tabla con colores ---
+        style = ttk.Style()
+        style.configure("mystyle.Treeview", 
+                        background="#FFFFFF",
+                        foreground="black",
+                        rowheight=25,
+                        font=("Arial", 10))
+        style.map("mystyle.Treeview", background=[("selected", "#0078D7")])
+        self.tree.configure(style="mystyle.Treeview")
         self.tree.bind("<Double-1>", self.mostrar_ficha)
 
         style = ttk.Style()
@@ -212,8 +221,8 @@ class ColaboradorWindow:
                 relief="flat", width=18, height=2, command=self.exportar_pdf).grid(row=0, column=0, padx=15)
         tk.Button(btns_frame, text="📊 Exportar Excel", bg="#2ecc71", fg="white", font=("Segoe UI", 11, "bold"),
                 relief="flat", width=18, height=2, command=self.exportar_excel).grid(row=0, column=1, padx=15)
-        tk.Button(btns_frame, text="🖨️ Imprimir", bg="#3498db", fg="white", font=("Segoe UI", 11, "bold"),
-                relief="flat", width=18, height=2, command=self.imprimir_pdf).grid(row=0, column=2, padx=15)
+        #tk.Button(btns_frame, text="🖨️ Imprimir", bg="#3498db", fg="white", font=("Segoe UI", 11, "bold"),
+                #relief="flat", width=18, height=2, command=self.imprimir_pdf).grid(row=0, column=2, padx=15)
         tk.Button(btns_frame, text="🧹 Limpiar Filtros", bg="#f1c40f", fg="black", font=("Segoe UI", 11, "bold"),
                 relief="flat", width=18, height=2, command=self.limpiar).grid(row=0, column=3, padx=15)
         tk.Button(btns_frame, text="↩️ Regresar", bg="#9b59b6", fg="white", font=("Segoe UI", 11, "bold"),
@@ -226,15 +235,27 @@ class ColaboradorWindow:
         self.actualizar_estados_bd()
         self.actualizar_tabla()
 
-    # ---- Conexión y consulta ---- #
     def obtener_empleados(self):
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
+
         cur.execute("""
-            SELECT id, identidad, nombre1, nombre2, apellido1, apellido2,
-                   tipo_contrato, dependencia, cargo, fecha_inicio, fecha_finalizacion, sueldo, estado
+            SELECT 
+                id,
+                COALESCE(identidad, '') AS identidad,
+                COALESCE(nombre1, '') || ' ' || COALESCE(nombre2, '') || ' ' ||
+                COALESCE(apellido1, '') || ' ' || COALESCE(apellido2, '') AS nombre_completo,
+                COALESCE(tipo_contrato, '') AS tipo_contrato,
+                COALESCE(dependencia, '') AS dependencia,
+                COALESCE(cargo, '') AS cargo,
+                fecha_inicio,
+                fecha_finalizacion,
+                COALESCE(sueldo, 0) AS sueldo,
+                estado
             FROM colaborador
+            ORDER BY id ASC
         """)
+
         empleados = cur.fetchall()
         conn.close()
         return empleados
@@ -266,6 +287,8 @@ class ColaboradorWindow:
                 conn.close()
 
     def cargar_listas(self):
+        # Repetir actualización cada 3 segundos
+        self.root.after(3000, self.cargar_listas)
         """Carga listas distintas desde la tabla colaborador para filtros."""
         try:
             conn = psycopg2.connect(**DB_CONFIG)
@@ -299,9 +322,13 @@ class ColaboradorWindow:
             self.lista_cargos = []
             self.lista_identidades = []
             self.lista_nombres_completos = []
+        
+        for row in self.tree.get_children():
+            self.tree.delete(row)
 
     # ---- Filtrado actualizado ---- #
     def filtrar_empleados(self, empleados):
+        # Filtros de interfaz
         estado_filtro = (self.estado_var.get() or "").strip()
         tipo_filtro = (self.tipo_contrato_var.get() or "").strip()
         fecha_inicio = self.anio_inicio.get_date() if hasattr(self, "anio_inicio") else None
@@ -313,7 +340,7 @@ class ColaboradorWindow:
         cargo_filtro = (self.cargo_var.get() or "").strip().lower()
         dep_filtro = (self.dependencia_var.get() or "").strip().lower()
 
-        # sueldo: leer rango seleccionado
+        # rango de sueldo
         sueldo_range = (self.sueldo_range_cb.get() if hasattr(self, "sueldo_range_cb") else "").strip()
         min_sueldo, max_sueldo = None, None
         if sueldo_range and sueldo_range != "Todos":
@@ -333,33 +360,41 @@ class ColaboradorWindow:
 
         filtrados = []
         for emp in empleados:
-            (id_, identidad, n1, n2, a1, a2, tipo, dep, cargo, fi, ff, sueldo, estado) = emp
-            fi_date = fi if isinstance(fi, date) else date.fromisoformat(fi)
-            ff_date = ff if isinstance(ff, date) else (date.fromisoformat(ff) if ff else None)
-            nombre = f"{n1} {n2 or ''} {a1} {a2 or ''}".strip()
+            # Desempaquetar según SELECT actual
+            (id_, identidad, nombre_completo, tipo_contrato, dependencia, cargo,
+            fecha_inicio_emp, fecha_finalizacion_emp, sueldo, estado) = emp
 
-            # normalizar fechas DB -> datetime.date
+            # Normalizar fechas
             try:
-                fi_date = fi if isinstance(fi, date) else date.fromisoformat(str(fi)) if fi else None
+                fi_date = fecha_inicio_emp if isinstance(fecha_inicio_emp, date) else (date.fromisoformat(str(fecha_inicio_emp)) if fecha_inicio_emp else None)
             except Exception:
                 fi_date = None
+
             try:
-                ff_date = ff if isinstance(ff, date) else date.fromisoformat(str(ff)) if ff else None
+                ff_date = fecha_finalizacion_emp if isinstance(fecha_finalizacion_emp, date) else (date.fromisoformat(str(fecha_finalizacion_emp)) if fecha_finalizacion_emp else None)
             except Exception:
                 ff_date = None
 
-            nombre = " ".join([p for p in (n1, n2, a1, a2) if p]).strip()
+            nombre = nombre_completo or ""
 
+            # Determinar estado real del empleado
+            emp_estado = (estado or "").strip().lower()
+            if not emp_estado:
+                if ff_date and ff_date < date.today():
+                    emp_estado = "inactivo"
+                else:
+                    emp_estado = "activo"
+            # 1) Filtrar por estado
             if estado_filtro and estado_filtro != "Todos":
-                if not estado or str(estado).strip().lower() != estado_filtro.lower():
+                if emp_estado != estado_filtro.lower():
                     continue
 
-            # 2) Tipo contrato
+            # 2) Filtrar por tipo de contrato
             if tipo_filtro and tipo_filtro != "Todos":
-                if not tipo or str(tipo).strip().lower() != tipo_filtro.lower():
+                if not tipo_contrato or str(tipo_contrato).strip().lower() != tipo_filtro.lower():
                     continue
 
-            # 3) ID / Identidad / Nombre (subcadena, insensible a mayúsculas)
+            # 3) Filtros por ID, Identidad, Nombre
             if id_filtro and id_filtro not in str(id_).lower():
                 continue
             if identidad_filtro and identidad_filtro not in str(identidad).lower():
@@ -367,13 +402,13 @@ class ColaboradorWindow:
             if nombre_filtro and nombre_filtro not in nombre.lower():
                 continue
 
-            # 4) Cargo / Dependencia
+            # 4) Filtrar por cargo y dependencia
             if cargo_filtro and cargo_filtro not in (cargo or "").lower():
                 continue
-            if dep_filtro and dep_filtro not in (dep or "").lower():
+            if dep_filtro and dep_filtro not in (dependencia or "").lower():
                 continue
 
-            # 5) Sueldo rango
+            # 5) Filtrar por sueldo
             try:
                 sueldo_val = float(sueldo) if sueldo is not None and str(sueldo) != "" else 0.0
             except Exception:
@@ -383,62 +418,71 @@ class ColaboradorWindow:
             if max_sueldo is not None and sueldo_val > max_sueldo:
                 continue
 
-            # 6) Rango de fechas: incluir si hay intersección entre [fi_date, ff_date] y [fecha_inicio, fecha_fin]
+            fi_date = fi_date or None
+            ff_date = ff_date or None
+            # 6) Filtrar por rango de fechas
             if fecha_inicio and fecha_fin:
-                # si empleado no tiene fecha de inicio, no se incluye
-                if not fi_date:
-                    continue
-                emp_start = fi_date
-                emp_end = ff_date or fi_date
-                # comprobar intersección
+                emp_start = fi_date or date.min
+                emp_end = ff_date or date.max
+                # Incluir inactivos aunque el contrato ya finalizó
                 if emp_end < fecha_inicio or emp_start > fecha_fin:
                     continue
 
-            # filtro por sueldo (si el campo sueldo en BD puede ser string, convertir a float con fallback)
-            try:
-                sueldo_val = float(sueldo) if sueldo is not None and str(sueldo) != "" else 0.0
-            except Exception:
-                sueldo_val = 0.0
-            if min_sueldo is not None:
-                if sueldo_val < min_sueldo:
-                    continue
-            if max_sueldo is not None:
-                if sueldo_val > max_sueldo:
-                    continue
+            filtrados.append((
+                id_, identidad, nombre, tipo_contrato, dependencia, cargo,
+                fi_date or "", ff_date or "", sueldo_val, estado
+            ))
 
-            # Rango de fechas (solo lunes-viernes)
-            fecha_valida = False
-            current = fi_date
-            while current <= (ff_date or fi_date):
-                if fecha_inicio <= current <= fecha_fin and current.weekday() < 5:
-                    fecha_valida = True
-                    break
-                current += timedelta(days=1)
-            if not fecha_valida:
-                continue
-            if fecha_inicio and fecha_fin:
-                # normalizar
-                emp_inicio = fi_date
-                emp_fin = ff_date or fi_date
-                # hay intersección de rangos?
-                if emp_fin < fecha_inicio or emp_inicio > fecha_fin:
-                    continue
-
-            filtrados.append((id_, identidad, nombre, tipo, dep, cargo, fi_date or "", ff_date or "", sueldo_val, estado))
         return filtrados
 
-    # ---- Actualizar tabla ---- #
     def actualizar_tabla(self):
+        # Limpiar tabla
         for item in self.tree.get_children():
             self.tree.delete(item)
+
         empleados = self.obtener_empleados()
         filtrados = self.filtrar_empleados(empleados)
-        # insertar con numeración
+
+        activos = 0
+        inactivos = 0
+
+        # ---- Insertar filas ----
         for i, emp in enumerate(filtrados, start=1):
-            vals = (i,) + emp  # prefijo número
-            self.tree.insert("", "end", values=vals)
-        # actualizar contador
-        self.count_label.configure(text=f"Registros: {len(filtrados)}")
+            vals = (i,) + emp
+            item_id = self.tree.insert("", "end", values=vals)
+
+            # Determinar estado de cada empleado
+            estado_emp = str(emp[-1]).strip().lower() if emp[-1] else ""
+            fecha_fin_emp = emp[7] if len(emp) > 7 else None  # ajustar índice según tu tabla
+
+            if not estado_emp or estado_emp == "":
+                if fecha_fin_emp and isinstance(fecha_fin_emp, date) and fecha_fin_emp < date.today():
+                    estado_emp = "inactivo"
+                else:
+                    estado_emp = "activo"
+
+            # Asignar color según estado
+            if estado_emp == "activo":
+                self.tree.item(item_id, tags=("activo",))
+                activos += 1
+            elif estado_emp in ("inactivo", "baja", "despedido"):
+                self.tree.item(item_id, tags=("inactivo",))
+                inactivos += 1
+            elif estado_emp == "pendiente":
+                self.tree.item(item_id, tags=("pendiente",))
+            else:
+                self.tree.item(item_id, tags=("otros",))
+
+        # ---- Configurar colores ----
+        self.tree.tag_configure("activo", background="#ccffcc")      # verde claro
+        self.tree.tag_configure("inactivo", background="#ffcccc")    # rojo claro
+        self.tree.tag_configure("pendiente", background="#d9d9d9")   # gris claro
+        self.tree.tag_configure("otros", background="#ffffff")       # blanco
+
+        # ---- Actualizar contador ----
+        self.count_label.configure(
+            text=f"Registros: {len(filtrados)} | Activos: {activos} | Inactivos: {inactivos}"
+        )
 
     def mostrar_ficha(self, event):
         """Muestra ventana flotante con ficha editable del colaborador (doble click)."""

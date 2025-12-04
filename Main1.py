@@ -4,15 +4,14 @@ from PIL import Image, ImageTk
 import tkinter as tk
 from tkinter import ttk, messagebox
 import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from cargo import VentanaCargo
 import subprocess
 from datetime import date, timedelta
-from crearuser import CrearUsuarioApp
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from PermisosDiasLaborales import EditarP
+from vacaciones import SolicitudVacaciones  # Importa la clase de tu archivo vacaciones.py
 
 # ---------- COLORES DEL DISEÑO MODERNO ----------
 BG = "#ecf0f1"
@@ -40,19 +39,23 @@ def conectar_db():
         host="localhost",
         database="database_umap",
         user="postgres",
-        password="umap"
+        password="umap",
+        port="5432"
     )
 
 # ============================================================
 # CLASE PRINCIPAL DE PANEL DE USUARIO
 # ============================================================
-class PantallaPrincipal:
+class PantallaPrincipal: 
     def __init__(self, root, usuario_actual, mostrar_toast_bienvenida=True):
         global MOSTRAR_BIENVENIDA
 
         self.root = root
         self.usuario_actual = usuario_actual
         self.mostrar_toast_bienvenida = mostrar_toast_bienvenida and MOSTRAR_BIENVENIDA
+
+        # Inicializar la variable de la ventana flotante
+        self.ventana_permisos = None
 
         # --- Configuración base ---
         self.root.title("Sistema Administrativo UMAP - Usuarios")
@@ -75,23 +78,53 @@ class PantallaPrincipal:
         return psycopg2.connect(**DB_CONFIG)
 
     def obtener_info_usuario(self):
+        """
+        Obtiene información del usuario actual desde tabla usuarios o colaborador.
+        Devuelve un diccionario con: nombre completo, rol, dependencia, cargo y foto_path.
+        """
         try:
             conn = self.conectar_bd()
             cur = conn.cursor()
+            # Primero intentamos desde tabla colaborador
             cur.execute("""
-                SELECT nombre, rol, unidad, foto_path
-                FROM usuarios
+                SELECT nombre1, nombre2, apellido1, apellido2, rol, cargo, dependencia, foto_path
+                FROM colaborador
                 WHERE usuario = %s
             """, (self.usuario_actual,))
             row = cur.fetchone()
-            conn.close()
             if row:
-                return {"nombre": row[0], "rol": row[1], "unidad": row[2], "foto_path": row[3]}
-            else:
-                return {"nombre": "Desconocido", "rol": "", "unidad": "", "foto_path": ""}
+                nombre_completo = " ".join(filter(None, [row[0], row[1], row[2], row[3]]))
+                return {
+                    "nombre": nombre_completo,
+                    "rol": "",
+                    "cargo": row[5],
+                    "dependencia": row[6],
+                    "foto_path": row[7],
+                    "origen": "colaborador"
+                }
+            # Si no se encuentra en colaborador, buscamos en usuarios
+            cur.execute("""
+                SELECT nombre, nombre2, apellido1, apellido2, rol, foto_path
+                FROM usuarios
+                WHERE usuario = %s
+            """, (self.usuario_actual,))
+            row2 = cur.fetchone()
+            conn.close()
+            if row2:
+                nombre_completo = " ".join(filter(None, [row2[0], row2[1], row2[2], row2[3]]))
+                return {
+                    "nombre": nombre_completo,
+                    "rol": row2[4],
+                    "cargo": "",          # No mostrar cargo
+                    "dependencia": "",    # No mostrar dependencia
+                    "foto_path": row2[5],
+                    "origen": "usuarios"
+                }
+            # Si no se encuentra en ninguna tabla
+            return {"nombre": "Desconocido", "rol": "", "cargo": "", "dependencia": "", "foto_path": "", "origen": ""}
         except Exception as e:
             messagebox.showerror("Error BD", f"No se pudo obtener la información del usuario:\n{e}")
-            return {"nombre": "Error", "rol": "", "unidad": "", "foto_path": ""}
+            return {"nombre": "Error", "rol": "", "cargo": "", "dependencia": "", "foto_path": "", "origen": ""}
 
     # ============================================================
     # PANEL PRINCIPAL
@@ -100,8 +133,8 @@ class PantallaPrincipal:
         self.panel_principal = tk.Frame(self.root, bg=BG)
         self.panel_principal.pack(fill="both", expand=True, side="right")
 
-        # --- Encabezado superior (ligeramente más bajo) ---
-        header_frame = tk.Frame(self.panel_principal, bg=PANEL, height=100, bd=0, relief="flat")
+        # --- Encabezado superior ---
+        header_frame = tk.Frame(self.panel_principal, bg=PANEL, height=100)
         header_frame.pack(fill="x", side="top", anchor="n")
         header_frame.pack_propagate(False)
 
@@ -122,16 +155,16 @@ class PantallaPrincipal:
         container = ttk.Frame(self.panel_principal, padding=10)
         container.pack(fill="both", expand=True)
 
-        # ---------- CUADROS SUPERIORES (más abajo y con espacio extra) ----------
+        # ---------- CUADROS SUPERIORES ----------
         cuadros_data = [
-            ("📅 Dias Trabajados", "40", "#1abc9c"),
-            ("🏖️ Dias Gozar", "10", "#3498db"),
-            ("🕒 Dias Pendientes", self.calcular_dias_contrato(), "#e67e22"),
-            ("👥 Dias Restantes", self.contar_empleados(), "#9b59b6"),
+            ("📅 Días Trabajados", self.calcular_dias_trabajados(), "#1abc9c"),
+            ("🏖️ Días Gozar", self.calcular_dias_a_gozar(), "#3498db"),
+            ("🕒 Días de Ausencia", self.calcular_dias_ausencia(), "#e67e22"),
+            ("📅 Días Restantes", self.calcular_dias_restantes(), "#9b59b6"),
         ]
 
         cuadros_frame = tk.Frame(container, bg=BG)
-        cuadros_frame.pack(fill="x", pady=(30, 20))  # Más separado del encabezado
+        cuadros_frame.pack(fill="x", pady=(30, 20))
         cuadros_frame.grid_columnconfigure((0,1,2,3), weight=1)
 
         for i, (titulo, valor, color) in enumerate(cuadros_data):
@@ -144,21 +177,22 @@ class PantallaPrincipal:
             tk.Label(frame, text=valor, bg=color, fg="white",
                      font=("Segoe UI", 20, "bold")).pack(pady=(3,8))
 
-        # --- Panel de solicitudes (más separado de los cuadros) ---
+        # ---------------- PANEL DE SOLICITUDES ----------------
         solicitudes_frame = ttk.LabelFrame(container, text="Solicitudes", padding=10)
-        solicitudes_frame.pack(fill="x", expand=False, pady=(20, 30))  # Mayor separación
+        solicitudes_frame.pack(fill="both", expand=True, pady=10)
 
         tabla_frame = ttk.Frame(solicitudes_frame)
-        tabla_frame.pack(fill="x", padx=5, pady=5, expand=False)
+        tabla_frame.pack(fill="both", padx=5, pady=5)
+        tabla_frame.columnconfigure(0, weight=1)
+        tabla_frame.rowconfigure(0, weight=1)
 
-        columnas = ("id", "usuario", "tipo", "fecha", "descripcion", "estado", "ver")
-        encabezados = ["ID", "Usuario", "Tipo Solicitud", "Fecha", "Descripción", "Estado", "👁️"]
+        columnas = ("#", "identidad", "usuario", "tipo", "cargo", "dependencia", "fecha", "estado", "ver")
+        encabezados = ["#", "Identidad", "Usuario", "Tipo Solicitud", "Cargo", "Dependencia", "Fecha", "Estado", "👁️"]
 
         self.tree = ttk.Treeview(tabla_frame, columns=columnas, show="headings", height=8)
         for col, texto in zip(columnas, encabezados):
             self.tree.heading(col, text=texto)
-            self.tree.column(col, anchor="center", width=130)
-        self.tree.column("descripcion", width=250)
+            self.tree.column(col, anchor="center", width=120)
         self.tree.column("ver", width=50)
 
         vsb = ttk.Scrollbar(tabla_frame, orient="vertical", command=self.tree.yview)
@@ -170,10 +204,11 @@ class PantallaPrincipal:
         tabla_frame.rowconfigure(0, weight=1)
 
         self.tree.bind("<Double-1>", self.ver_detalle_solicitud)
+        self.cargar_solicitudes()
 
-        # ---------- GRÁFICOS (más altos y bien distribuidos) ----------
+        # ---------- GRÁFICOS ----------
         graficos_container = tk.Frame(container, bg=BG)
-        graficos_container.pack(fill="x", pady=(10, 10))  # Subido y con espacio uniforme
+        graficos_container.pack(fill="x", pady=(10, 10))
 
         datos_graficos = [
             ("Dias Trabajados", int(cuadros_data[0][1])),
@@ -185,7 +220,7 @@ class PantallaPrincipal:
         colores_graficos = ["#1abc9c", "#3498db", "#e67e22", "#9b59b6"]
 
         for i, (titulo, valor) in enumerate(datos_graficos):
-            frame = tk.Frame(graficos_container, bg=BG, width=200, height=140)  # Más alto
+            frame = tk.Frame(graficos_container, bg=BG, width=200, height=140)
             frame.pack(side="left", expand=True, padx=10, pady=5)
             frame.pack_propagate(False)
 
@@ -219,7 +254,7 @@ class PantallaPrincipal:
     # PANEL LATERAL
     # ============================================================
     def crear_panel_lateral(self):
-        self.panel_lateral = tk.Frame(self.root, bg=PANEL, width=300, bd=0, relief="flat")
+        self.panel_lateral = tk.Frame(self.root, bg=PANEL, width=300)
         self.panel_lateral.pack(side="left", fill="y")
         self.panel_lateral.pack_propagate(False)
 
@@ -231,6 +266,7 @@ class PantallaPrincipal:
             foto_frame.pack(pady=(40, 20))
             tk.Label(foto_frame, image=self.foto_img, bg=PANEL, bd=3, relief="solid").pack()
 
+        # Mostrar nombre completo
         tk.Label(
             self.panel_lateral,
             text=self.usuario_info.get("nombre", "Usuario"),
@@ -238,13 +274,33 @@ class PantallaPrincipal:
             bg=PANEL,
             fg="white"
         ).pack()
-        tk.Label(
-            self.panel_lateral,
-            text=self.usuario_info.get("rol", ""),
-            font=("Segoe UI", 10),
-            bg=PANEL,
-            fg="white"
-        ).pack(pady=(0, 25))
+
+        # Mostrar cargo y dependencia solo si el usuario viene de colaborador
+        if self.usuario_info.get("origen") == "colaborador":
+            tk.Label(
+                self.panel_lateral,
+                text=self.usuario_info.get("cargo", ""),
+                font=("Segoe UI", 10),
+                bg=PANEL,
+                fg="white"
+            ).pack()
+            tk.Label(
+                self.panel_lateral,
+                text=self.usuario_info.get("dependencia", ""),
+                font=("Segoe UI", 10),
+                bg=PANEL,
+                fg="white"
+            ).pack(pady=(0, 10))
+
+        # Mostrar rol solo si NO viene de colaborador
+        if self.usuario_info.get("origen") != "colaborador":
+            tk.Label(
+                self.panel_lateral,
+                text=self.usuario_info.get("rol", ""),
+                font=("Segoe UI", 10),
+                bg=PANEL,
+                fg="white"
+            ).pack(pady=(0, 25))
 
         botones = [
             ("📆 Ausencias", self.mostrar_info_sistema),
@@ -283,6 +339,188 @@ class PantallaPrincipal:
                 dias += 1
             inicio += timedelta(days=1)
         return str(dias)
+    
+    def calcular_dias_trabajados(self):
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+
+            # buscar fecha_inicio del usuario
+            cur.execute("""
+                SELECT fecha_inicio
+                FROM colaborador
+                WHERE usuario = %s
+            """, (self.usuario_actual,))
+
+            row = cur.fetchone()
+            conn.close()
+
+            if not row or not row[0]:
+                return "0"
+
+            fecha_inicio = row[0]
+            fecha_actual = date.today()
+
+            dias = 0
+            while fecha_inicio <= fecha_actual:
+                if fecha_inicio.weekday() < 5:   # lunes-viernes
+                    dias += 1
+                fecha_inicio += timedelta(days=1)
+
+            return str(dias)
+
+        except Exception:
+            return "0"
+        
+    def calcular_dias_a_gozar(self):
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT fecha_inicio
+                FROM colaborador
+                WHERE usuario = %s
+            """, (self.usuario_actual,))
+
+            row = cur.fetchone()
+            conn.close()
+
+            if not row or not row[0]:
+                return "0"
+
+            fecha_inicio = row[0]
+            hoy = date.today()
+
+            # años completos transcurridos
+            anios = hoy.year - fecha_inicio.year
+            if (hoy.month, hoy.day) < (fecha_inicio.month, fecha_inicio.day):
+                anios -= 1
+
+            if anios <= 0:
+                return "0"
+
+            dias = min(anios * 5, 20)
+            return str(dias)
+
+        except Exception:
+            return "0"
+        
+    def calcular_dias_a_gozar(self):
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT fecha_inicio
+                FROM colaborador
+                WHERE usuario = %s
+            """, (self.usuario_actual,))
+
+            row = cur.fetchone()
+            conn.close()
+
+            if not row or not row[0]:
+                return "0"
+
+            fecha_inicio = row[0]
+            hoy = date.today()
+
+            # años completos transcurridos
+            anios = hoy.year - fecha_inicio.year
+            if (hoy.month, hoy.day) < (fecha_inicio.month, fecha_inicio.day):
+                anios -= 1
+
+            if anios <= 0:
+                return "0"
+
+            dias = min(anios * 5, 20)
+            return str(dias)
+
+        except Exception:
+            return "0"
+        
+    def calcular_dias_ausencia(self):
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+
+            # obtener identidad o id del colaborador
+            cur.execute("""
+                SELECT identidad, id
+                FROM colaborador
+                WHERE usuario = %s
+            """, (self.usuario_actual,))
+
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return "0"
+
+            identidad, colaborador_id = row
+
+            # buscar ausencias
+            cur.execute("""
+                SELECT fecha_inicio, fecha_fin
+                FROM permisos_dias_laborales
+                WHERE colaborador_id = %s OR identidad = %s
+            """, (colaborador_id, identidad))
+
+            filas = cur.fetchall()
+            conn.close()
+
+            if not filas:
+                return "0"
+
+            total_dias = 0
+
+            for fi, ff in filas:
+                while fi <= ff:
+                    if fi.weekday() < 5:
+                        total_dias += 1
+                    fi += timedelta(days=1)
+
+            return str(total_dias)
+
+        except Exception:
+            return "0"
+        
+    def calcular_dias_restantes(self):
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+
+            # obtener la fecha_fin del usuario
+            cur.execute("""
+                SELECT fecha_finalizacion
+                FROM colaborador
+                WHERE usuario = %s
+            """, (self.usuario_actual,))
+            row = cur.fetchone()
+            conn.close()
+
+            if not row or not row[0]:
+                return "0"
+
+            fecha_finalizacion = row[0]
+            hoy = date.today()
+
+            # Si ya llegó a la fecha_fin → 0
+            if hoy >= fecha_finalizacion:
+                return "0"
+
+            dias = 0
+            dia = hoy
+
+            while dia <= fecha_finalizacion:
+                if dia.weekday() < 5:  # lunes a viernes
+                    dias += 1
+                dia += timedelta(days=1)
+
+            return str(dias)
+
+        except Exception:
+            return "0"
 
     def contar_empleados(self):
         try:
@@ -296,31 +534,127 @@ class PantallaPrincipal:
             return "0"
 
     def mostrar_vacaciones(self):
-        messagebox.showinfo("Vacaciones", "Aquí se mostrarán las vacaciones del colaborador.")
+        try:
+            # Si la ventana no existe o ya fue cerrada
+            if not hasattr(self, 'ventana_vacaciones') or self.ventana_vacaciones is None or not self.ventana_vacaciones.winfo_exists():
+                self.ventana_vacaciones = SolicitudVacaciones(self.root, self.usuario_actual)
+            else:
+                self.ventana_vacaciones.lift()  # Trae la ventana al frente
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo abrir el formulario de vacaciones:\n{e}")
 
     def mostrar_dashboard(self):
-        messagebox.showinfo("Reportes", "Aquí se mostrará el Formulario de Reportes")
+        try:
+            import reportesusuario # o el archivo donde esté tu clase ReportesU
+            reportesusuario.ReportesU(self.root, usuario_actual=self.usuario_actual)
+        except Exception as e:
+            messagebox.showerror("Error", f"Ocurrió un problema al abrir el reporte:\n{e}")
 
     def configuracion_dashboard(self):
         try:
-            # Abrir el formulario editar_perfil.py como ventana flotante
             import editar_perfil
             editar_perfil.EditarPerfil(self.root, user_id=self.usuario_actual)
-            # No se necesita nuevo_root.mainloop(), el Toplevel maneja la ventana flotante
         except Exception as e:
             messagebox.showerror("Error", f"Ocurrió un problema al abrir la configuración:\n{e}")
-
 
     def volver_login(self):
         global MOSTRAR_BIENVENIDA
         MOSTRAR_BIENVENIDA = True
+
+        # Ejecutar login solo una vez
         script_path = os.path.abspath("log.py")
         subprocess.Popen([sys.executable, script_path])
+
+        # Cancelar after() si hay alguno
+        try:
+            self.root.after_cancel(self.after_cargar)
+        except:
+            pass
+        try:
+            self.root.after_cancel(self.after_actualizar)
+        except:
+            pass
+
         self.root.destroy()
         sys.exit()
 
     def mostrar_info_sistema(self):
-        messagebox.showinfo("Ausencias", "Aquí se mostrará el Formulario de Ausencias")
+        try:
+            import PermisosDiasLaborales
+            PermisosDiasLaborales.EditarP(self.root, user_id=self.usuario_actual)
+        except Exception as e:
+            messagebox.showerror("Error", f"Ocurrió un problema al abrir las solicitudes:\n{e}")
+        
+    def cargar_solicitudes(self):
+        try:
+            conn = self.conectar_bd()
+            cur = conn.cursor()
+
+            # Obtener el id del colaborador según el usuario_actual
+            cur.execute("""
+                SELECT id
+                FROM colaborador
+                WHERE usuario = %s
+            """, (self.usuario_actual,))
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return
+            colaborador_id = row[0]
+
+            # Permisos de días laborales del usuario_actual
+            cur.execute("""
+                SELECT p.id, c.identidad, 
+                       CONCAT(c.nombre1, ' ', c.apellido1) AS nombre_usuario,
+                       'Días Laborales' AS tipo,
+                       c.cargo, c.dependencia,
+                       p.fecha_entrega AS fecha, p.estado
+                FROM permisos_dias_laborales p
+                JOIN colaborador c ON p.colaborador_id = c.id
+                WHERE p.colaborador_id = %s
+                ORDER BY p.fecha_entrega DESC
+            """, (colaborador_id,))
+            permisos_dias = cur.fetchall()
+
+            # Vacaciones del usuario_actual
+            cur.execute("""
+                SELECT v.id, c.identidad, 
+                        CONCAT(c.nombre1, ' ', c.apellido1) AS nombre_usuario,
+                       'Vacaciones' AS tipo,
+                       c.cargo, c.dependencia,
+                       v.fecha_inicio AS fecha, v.estado
+                FROM vacaciones v
+                JOIN colaborador c ON v.colaborador_id = c.id
+                WHERE v.colaborador_id = %s
+                ORDER BY v.fecha_inicio DESC
+            """, (colaborador_id,))
+            vacaciones = cur.fetchall()
+
+            conn.close()
+
+            # Limpiar tabla
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
+            # Insertar filas
+            for fila in permisos_dias + vacaciones:
+                self.tree.insert("", "end", values=(
+                    fila[0],   # #
+                    fila[1],   # identidad
+                    fila[2],   # usuario
+                    fila[3],   # tipo
+                    fila[4],   # cargo
+                    fila[5],   # dependencia
+                    fila[6],   # fecha
+                    fila[7],   # estado
+                    "👁️"
+                ), tags=("pendiente",))
+
+            # Colorear filas pendientes
+            self.tree.tag_configure("pendiente", background="#e0e0e0")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Ocurrió un problema al cargar solicitudes: {e}")
 
     def ver_detalle_solicitud(self, event):
         item = self.tree.selection()
@@ -378,9 +712,6 @@ class PantallaPrincipal:
 
         fade_in()
 
-# ============================================================
-# MAIN PRINCIPAL
-# ============================================================
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         usuario = sys.argv[1]

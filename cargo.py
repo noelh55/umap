@@ -12,7 +12,6 @@ DB_CONFIG = {
     "password": "umap"
 }
 
-
 # ---------------- FUNCIÓN DE TOAST (NOTIFICACIÓN FLOTANTE) ----------------
 def mostrar_toast(master, mensaje):
     toast = tk.Toplevel(master)
@@ -125,8 +124,8 @@ class VentanaCargo(tk.Toplevel):
         self.btn_guardar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
         self.btn_editar = tk.Button(btn_frame, text="✏️ Editar", bg="#3498db", fg="white",
-                                    font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
-                                    command=self.habilitar_edicion)
+                            font=("Segoe UI", 10, "bold"), relief="flat", cursor="hand2",
+                            command=self.habilitar_edicion, state="disabled")
         self.btn_editar.pack(side="left", expand=True, fill="x", padx=5, ipadx=5, ipady=5)
 
         self.btn_actualizar = tk.Button(btn_frame, text="🔄 Actualizar", bg="#f39c12", fg="white",
