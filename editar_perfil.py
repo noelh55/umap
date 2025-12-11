@@ -142,7 +142,7 @@ class EditarPerfil(tk.Toplevel):
 
             row = None
 
-            # Buscar en usuarios
+            # ---------------- BUSCAR EN USUARIOS ----------------
             if str(self.user_id).isdigit():
                 cur.execute("SELECT * FROM usuarios WHERE id=%s", (int(self.user_id),))
             else:
@@ -153,7 +153,7 @@ class EditarPerfil(tk.Toplevel):
             if row:
                 self.origin = "usuarios"
             else:
-                # Buscar en colaborador
+                # ---------------- BUSCAR EN COLABORADOR ----------------
                 if str(self.user_id).isdigit():
                     cur.execute("SELECT * FROM colaborador WHERE id=%s", (int(self.user_id),))
                 else:
@@ -163,15 +163,14 @@ class EditarPerfil(tk.Toplevel):
                 if row:
                     self.origin = "colaborador"
 
-            cur.close()
-            conn.close()
-
             if not row:
+                cur.close()
+                conn.close()
                 messagebox.showerror("Error", "Usuario no encontrado")
                 self.destroy()
                 return
 
-            # ----- MAPEO DE CAMPOS -----
+            # ---------------- MAPEO DE CAMPOS ----------------
             mapa = {
                 "nombre": "nombre1",
                 "nombre2": "nombre2",
@@ -183,7 +182,7 @@ class EditarPerfil(tk.Toplevel):
                 "unidad": "unidad"
             }
 
-            # ----- CARGAR CAMPOS -----
+            # ---------------- CARGAR VALORES EN LOS ENTRY ----------------
             for key in self.fields:
                 self.fields[key].config(state="normal")
                 self.fields[key].delete(0, tk.END)
@@ -195,37 +194,67 @@ class EditarPerfil(tk.Toplevel):
                     val = row.get(columna, "")
 
                 self.fields[key].insert(0, val if val else "")
-                self.fields[key].config(state="disabled")
+                self.fields[key].config(state="disabled")  # Por defecto deshabilitado
 
-            # ----- FOTO -----
+            # ---------------- CARGAR FOTO ----------------
             if "foto_path" in row and row["foto_path"]:
                 if os.path.exists(row["foto_path"]):
                     with open(row["foto_path"], "rb") as f:
                         self.mostrar_foto(f.read())
                         self.foto_path_actual = row["foto_path"]
 
-            # Solo habilitar si hay fecha_aceptacion y estado de la solicitud es 'aprobada'
-            conn = psycopg2.connect(**DB_CONFIG)
-            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            cur.execute("""
-                SELECT estado, fecha_aceptacion FROM solicitudes_actualizacion
-                WHERE usuario=%s ORDER BY fecha_solicitud DESC LIMIT 1
-            """, (self.user_id,))
-            sol = cur.fetchone()
+            # ---------------- ESTADO DE EDICIÓN ----------------
+            editable = row.get("editable", False)
+
+            if editable:
+                self.habilitar_edicion()
+                self.lbl_estado.config(text="Solicitud aprobada. Puede editar sus datos.", fg="#27ae60")
+            else:
+                # Bloquear campos y botones
+                for ent in self.fields.values():
+                    ent.config(state="disabled")
+                self.btn_actualizar.config(state="disabled")
+                self.btn_cambiar_foto.config(state="disabled")
+                self.lbl_estado.config(text="Datos bloqueados. Solicite actualización.", fg="#2c3e50")
+
             cur.close()
             conn.close()
 
-            if sol:
-                estado_solicitud, fecha_aceptacion = sol
-                if estado_solicitud == "aprobada":
-                    self.habilitar_edicion()
-                    self.lbl_estado.config(text="Solicitud aprobada. Puede editar sus datos.", fg="#27ae60")
-                elif estado_solicitud == "rechazada":
-                    self.lbl_estado.config(text="Solicitud rechazada. No puede editar.", fg="#c0392b")
-                else:
-                    self.lbl_estado.config(text="Datos bloqueados. Solicite actualización.", fg="#2c3e50")
         except Exception as e:
             messagebox.showerror("Error BD", f"No se pudo cargar:\n{e}")
+        
+    def mostrar_toast(self, mensaje, color="#27ae60", duracion=3000):
+        """Muestra un toast flotante arriba a la derecha"""
+        toast = tk.Toplevel(self)
+        toast.overrideredirect(True)
+        toast.attributes("-topmost", True)
+        toast.configure(bg=color)
+
+        lbl = tk.Label(toast, text=mensaje, bg=color, fg="white",
+                       font=("Segoe UI", 10, "bold"), padx=10, pady=6)
+        lbl.pack()
+
+        # Posición: esquina superior derecha
+        self.update_idletasks()
+        x = self.winfo_x() + self.winfo_width() - toast.winfo_reqwidth() - 20
+        y = self.winfo_y() + 20
+        toast.geometry(f"+{x}+{y}")
+
+        # Fade in
+        for i in range(0, 11):
+            toast.attributes("-alpha", i/10)
+            toast.update()
+            toast.after(20)
+
+        # Función para cerrar el toast
+        def cerrar_toast(toast_ref=toast):  # ← capturamos toast como argumento por defecto
+            for i in range(10, -1, -1):
+                toast_ref.attributes("-alpha", i/10)
+                toast_ref.update()
+                toast_ref.after(20)
+            toast_ref.destroy()
+
+        toast.after(duracion, cerrar_toast)
 
     # ---------------- MOSTRAR FOTO ----------------
     def mostrar_foto(self, foto_bytes):
@@ -285,60 +314,89 @@ class EditarPerfil(tk.Toplevel):
 
     # ---------------- HABILITAR EDICIÓN ----------------
     def habilitar_edicion(self):
-        for ent in self.fields.values():
-            ent.config(state="normal")
+        for key, ent in self.fields.items():
+            if key == "rol":  
+                ent.config(state="disabled")  # ← SIEMPRE DESHABILITADO
+            else:
+                ent.config(state="normal")
 
         self.btn_actualizar.config(state="normal")
         self.btn_cambiar_foto.config(state="normal")
 
+
     # ---------------- ACTUALIZAR ----------------
     def actualizar(self):
         try:
-            datos = {k: v.get().strip() for k,v in self.fields.items()}
+            # ---------------- DATOS ----------------
+            campos = {k: v.get().strip() for k, v in self.fields.items()}
 
-            tabla = "colaborador" if self.origin=="colaborador" else "usuarios"
+            # Determinar tabla
+            tabla = "colaborador" if self.origin == "colaborador" else "usuarios"
 
+            # ---------------- MAPEO DE COLUMNAS ----------------
+            if self.origin == "colaborador":
+                columnas = ["usuario", "contrasena", "nombre1", "nombre2", "apellido1", "apellido2", "unidad"]
+                valores = [
+                    campos["usuario"],
+                    campos["contrasena"],
+                    campos["nombre"],
+                    campos["nombre2"],
+                    campos["apellido1"],
+                    campos["apellido2"],
+                    campos["unidad"]
+                ]
+            else:  # usuarios
+                columnas = ["usuario", "contrasena", "nombre", "nombre2", "apellido1", "apellido2", "unidad"]
+                valores = [
+                    campos["usuario"],
+                    campos["contrasena"],
+                    campos["nombre"],
+                    campos["nombre2"],
+                    campos["apellido1"],
+                    campos["apellido2"],
+                    campos["unidad"]
+                ]
+
+            # ---------------- CONEXIÓN ----------------
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
 
-            cur.execute(f"""
-                UPDATE {tabla}
-                SET usuario=%s, contrasena=%s, nombre1=%s, nombre2=%s,
-                    apellido1=%s, apellido2=%s, rol=%s, unidad=%s,
-                    editable=FALSE
-                WHERE usuario=%s
-            """, (
-                datos["usuario"], datos["contrasena"], datos["nombre1"], datos["nombre2"],
-                datos["apellido1"], datos["apellido2"], datos["rol"], datos["unidad"],
-                self.user_id
-            ))
+            # Construir SET dinámicamente
+            set_clause = ", ".join([f"{col}=%s" for col in columnas])
 
-            # GUARDAR FOTO NUEVA (si la seleccionó)
+            # Ejecutar UPDATE
+            cur.execute(f"UPDATE {tabla} SET {set_clause}, editable=FALSE WHERE usuario=%s",
+                        valores + [self.user_id])
+
+            # ---------------- GUARDAR FOTO NUEVA ----------------
             if self.nueva_foto_bytes:
-                foto_path = f"fotos/{datos['usuario']}.jpg"
+                foto_path = f"fotos/{campos['usuario']}.jpg"
                 os.makedirs("fotos", exist_ok=True)
                 with open(foto_path, "wb") as f:
                     f.write(self.nueva_foto_bytes)
 
                 cur.execute(f"UPDATE {tabla} SET foto_path=%s WHERE usuario=%s",
-                    (foto_path, self.user_id))
+                            (foto_path, self.user_id))
+
+            # ---------------- DESHABILITAR CAMPOS Y BOTONES ----------------
+            # bloquear campos después de actualizar
+            cur.execute(f"UPDATE {tabla} SET editable=FALSE WHERE usuario=%s", (self.user_id,))
 
             conn.commit()
-
-            # Después de guardar cambios:
-            self.btn_actualizar.config(state="disabled")
-            self.btn_cambiar_foto.config(state="disabled")
-            self.lbl_estado.config(text="Perfil actualizado. Solicite otra actualización para más cambios.", fg="#27ae60")
-
-            # Actualizar editable en BD
-            cur.execute("UPDATE colaborador SET editable=FALSE WHERE usuario=%s", (self.user_id,))
-
             cur.close()
             conn.close()
 
+            for ent in self.fields.values():
+                ent.config(state="disabled")
+
             self.btn_actualizar.config(state="disabled")
             self.btn_cambiar_foto.config(state="disabled")
-            self.lbl_estado.config(text="Perfil actualizado correctamente.", fg="#27ae60")
+
+            # ---------------- MENSAJE ----------------
+            self.lbl_estado.config(text="Datos bloqueados. Solicite actualización.", fg="#2c3e50")
+
+            # ---------------- TOAST ----------------
+            self.mostrar_toast("Perfil actualizado correctamente.", color="#27ae60")
 
         except Exception as e:
             messagebox.showerror("Error BD", f"No se pudo actualizar:\n{e}")

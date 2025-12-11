@@ -53,20 +53,58 @@ class ReporteEmpleados:
         filtros_frame.pack(pady=10, fill="x", padx=20)
 
         tk.Label(filtros_frame, text="Tipo Contrato:", bg="#ffffff").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-
         self.tipo_var = tk.StringVar(value="Todos")
         self.tipo_cb = ttk.Combobox(filtros_frame, textvariable=self.tipo_var,
                                     state="readonly", width=25)
         self.tipo_cb.grid(row=0, column=1, padx=5, pady=5)
-        self.tipo_cb.bind("<<ComboboxSelected>>", lambda e: self.cargar_tabla())
+        #self.tipo_cb.bind("<<ComboboxSelected>>", lambda e: self.cargar_tabla())
 
-        ttk.Button(filtros_frame, text="Limpiar Filtro", command=self.limpiar_filtro).grid(row=0, column=2, padx=10)
-        ttk.Button(filtros_frame, text="Generar PDF", command=self.generar_pdf).grid(row=0, column=3, padx=10)
-        ttk.Button(filtros_frame, text="Generar Excel", command=self.exportar_excel).grid(row=0, column=4, padx=10)
+        # ---- FILTRO POR NOMBRE ----
+                # ---- FILTRO POR NOMBRE EN LA PARTE SUPERIOR ----
+        tk.Label(filtros_frame, text="Colaborador:", bg="#ffffff").grid(row=0, column=2, padx=5, pady=5, sticky="w")
+        self.nombre_var = tk.StringVar()
+        self.nombre_cb = ttk.Combobox(
+            filtros_frame,
+            textvariable=self.nombre_var,
+            width=25,
+            state="normal"  # permite escribir y seleccionar
+        )
+        self.nombre_cb.grid(row=0, column=3, padx=5, pady=5)
+
+        # Al escribir, actualiza automáticamente
+        self.nombre_var.trace("w", lambda *args: self.actualizar_vista())
+
+        # Al seleccionar, también actualiza
+        self.nombre_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_vista())
+
+        ttk.Button(filtros_frame, text="Limpiar Nombre", command=self.limpiar_filtro_nombre).grid(row=0, column=4, padx=10)
+
+        # ---- FILTRO POR IDENTIDAD ----
+        tk.Label(filtros_frame, text="Identidad:", bg="#ffffff").grid(row=0, column=5, padx=5, pady=5, sticky="w") 
+        self.identidad_var = tk.StringVar()
+        self.lista_identidades = self.obtener_lista_identidades()  # función que definimos abajo
+        self.identidad_cb = ttk.Combobox(filtros_frame, textvariable=self.identidad_var,
+                                         values=self.lista_identidades, width=25, state="normal")
+        self.identidad_cb.grid(row=0, column=6, padx=5, pady=5)
+
+        # Filtrado dinámico mientras se escribe
+        def filtrar_identidad(*args):
+            texto = self.identidad_var.get().lower()
+            filtradas = [i for i in self.lista_identidades if texto in i.lower()]
+            self.identidad_cb['values'] = filtradas
+            self.actualizar_vista()
+
+        self.identidad_var.trace_add("write", filtrar_identidad)
+        self.identidad_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_vista())
+
+        ttk.Button(filtros_frame, text="Limpiar Identidad", command=self.limpiar_filtro_identidad).grid(row=0, column=7, padx=10)
+
+        ttk.Button(filtros_frame, text="Limpiar Filtro", command=self.limpiar_filtro).grid(row=0, column=8, padx=10)
+        ttk.Button(filtros_frame, text="Generar PDF", command=self.generar_pdf).grid(row=1, column=0, padx=10)
         self.boton_grafico = ttk.Button(filtros_frame, text="Ver Gráfico", command=self.toggle_grafico)
-        self.boton_grafico.grid(row=0, column=5, padx=10)
+        self.boton_grafico.grid(row=1, column=1, padx=10)
         #ttk.Button(filtros_frame, text="Regresar", command=self.regresar).grid(row=0, column=7, padx=10)
-        ttk.Button(filtros_frame, text="Cerrar", command=self.cerrar_ventana).grid(row=0, column=6, padx=10)
+        ttk.Button(filtros_frame, text="Cerrar", command=self.cerrar_ventana).grid(row=1, column=3, padx=10)
 
         self.cargar_comboboxes()
 
@@ -90,7 +128,7 @@ class ReporteEmpleados:
                     "Profesión", "Tipo Contrato", "Dependencia", "Cargo",
                     "Usuario", "Rol", "Unidad")
 
-        self.tree = ttk.Treeview(self.tree_frame, columns=columnas, show="headings", selectmode="browse", height=20)
+        self.tree = ttk.Treeview(self.tree_frame, columns=columnas, show="headings", selectmode="browse", height=12)
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -116,6 +154,14 @@ class ReporteEmpleados:
     def limpiar_filtro(self):
         self.tipo_var.set("Todos")
         self.cargar_tabla()
+
+    def limpiar_filtro_identidad(self):
+        self.identidad_var.set("")
+        self.actualizar_vista()
+
+    def limpiar_filtro_nombre(self):
+        self.nombre_var.set("")
+        self.actualizar_vista()
 
     def actualizar_vista(self):
         """Actualiza la tabla o el gráfico según lo que se esté mostrando."""
@@ -193,9 +239,15 @@ class ReporteEmpleados:
         try:
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
+            # Cargar tipos de contrato
             cur.execute("SELECT nombre FROM contratos ORDER BY nombre")
             contratos = [row[0] for row in cur.fetchall()]
             self.tipo_cb['values'] = ["Todos"] + contratos
+
+            # Cargar nombres
+            cur.execute("SELECT nombre1 FROM colaborador ORDER BY nombre1")
+            nombres = [row[0] for row in cur.fetchall() if row[0]]
+            self.nombre_cb['values'] = nombres
             conn.close()
         except Exception as e:
             self.mostrar_toast(f"Error al cargar tipos: {e}")
@@ -218,7 +270,6 @@ class ReporteEmpleados:
 
     # ---------------- CARGAR TABLA ----------------
     def cargar_tabla(self):
-        self.tipo_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_vista())
         if self.grafico_visible:
             return
 
@@ -232,11 +283,25 @@ class ReporteEmpleados:
             query = """SELECT id, identidad, nombre1, nombre2, apellido1, apellido2, telefono, profesion,
                               tipo_contrato, dependencia, cargo, usuario, rol, unidad 
                        FROM colaborador WHERE 1=1"""
+            params = []
+            # filtro por tipo contrato
             if self.tipo_var.get() != "Todos":
                 query += " AND tipo_contrato=%s"
-                cur.execute(query, (self.tipo_var.get(),))
-            else:
-                cur.execute(query)
+                params.append(self.tipo_var.get())
+
+            # filtro por nombre
+            if self.nombre_var.get().strip() != "":
+                query += " AND nombre1 ILIKE %s"
+                params.append("%" + self.nombre_var.get().strip() + "%")
+
+            # filtro por identidad
+            if self.identidad_var.get().strip() != "":
+                query += " AND identidad ILIKE %s"
+                params.append("%" + self.identidad_var.get().strip() + "%")
+
+            print("QUERY:", query, params)
+            cur.execute(query, tuple(params))
+
             rows = cur.fetchall()
             conn.close()
 
@@ -254,23 +319,22 @@ class ReporteEmpleados:
         except Exception as e:
             self.mostrar_toast(f"Error al cargar tabla: {e}")
 
+    def obtener_lista_identidades(self):
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("SELECT identidad FROM colaborador ORDER BY identidad")
+            identidades = [row[0] for row in cur.fetchall() if row[0]]
+            conn.close()
+            return identidades
+        except Exception as e:
+            self.mostrar_toast(f"Error al cargar identidades: {e}")
+            return []
+
     def regresar(self):
         self.root.destroy()
         from contrato import VentanaContrato
         VentanaContrato(self.root.master)
-
-    # ---------------- EXPORTAR EXCEL ----------------
-    def exportar_excel(self):
-        try:
-            file = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
-            if not file:
-                return
-            df = pd.DataFrame(self.tabla_datos_previos, columns=["#","ID","Identidad","Nombre","Apellido","Teléfono",
-                    "Profesión","Tipo Contrato","Dependencia","Cargo","Usuario","Rol","Unidad"])
-            df.to_excel(file, index=False)
-            self.mostrar_toast("Excel generado correctamente.")
-        except Exception as e:
-            self.mostrar_toast(f"No se pudo exportar: {e}")
 
     # ---------------- GENERAR PDF ----------------
     def generar_pdf(self):
@@ -280,20 +344,46 @@ class ReporteEmpleados:
                 return
             c = canvas.Canvas(file, pagesize=landscape(A4))
             width, height = landscape(A4)
+            # --- LOGOS Y ENCABEZADO ---
+            c.drawImage("escudo.png", 30, height - 95, width=70, height=70, preserveAspectRatio=True, mask='auto')
+            c.drawImage("peh.png", width - 200, height - 95, width=70, height=70, preserveAspectRatio=True, mask='auto')
+            c.drawImage("muni.jpg", width - 110, height - 95, width=70, height=70, preserveAspectRatio=True, mask='auto')
+
+            # ENCABEZADO
             c.setFont("Helvetica-Bold", 16)
-            c.drawString(30, height - 40, "Reporte por Tipo de Contrato")
-            columnas = ["#","ID","Identidad","Nombre","Apellido","Teléfono",
-                        "Profesión","Tipo Contrato","Dependencia","Cargo",
-                        "Usuario","Rol","Unidad"]
-            col_width = (width - 60) / len(columnas)
-            y = height - 80
-            c.setFillColorRGB(0.29, 0.47, 0.73)  # Azul
-            c.rect(30, y - 15, width - 60, 20, stroke=1, fill=1)
+            c.drawCentredString(width/2, height - 30, "MUNICIPALIDAD DE LA ESPERANZA")
+
+            c.setFont("Helvetica", 11)
+            c.drawCentredString(width/2, height - 50, "LA ESPERANZA, INTIBUCÁ, HONDURAS C.A.")
+            c.drawCentredString(width/2, height - 70, "Tel: 2783-1818, 2783-1296, Fax: 2783-2124")
+            c.drawCentredString(width/2, height - 90, "E-mail: munilaeza@yahoo.es   rrhh.municipalidadlaeza@gmail.com")
+
+            # Ajustar punto de inicio de la tabla
+            y = height - 140
+            c.setFont("Helvetica-Bold", 16)
+            columnas = [
+                "#", "ID", "Identidad", "Nombre completo", "Teléfono",
+                "Profesión", "Tipo Contrato", "Dependencia", "Cargo", "Usuario", "Unidad"
+            ]
+
+            column_widths = [30, 40, 80, 150, 70, 100, 90, 90, 90, 70, 60]
+
+            x_inicio = 30
+            y = height - 130
+
+            # Encabezado
+            c.setFillColorRGB(0.29, 0.47, 0.73)
+            c.rect(x_inicio, y - 12, sum(column_widths), 20, fill=1, stroke=0)
             c.setFillColorRGB(1, 1, 1)
-            c.setFont("Helvetica-Bold", 8)
+            c.setFont("Helvetica-Bold", 9)
+
+            x_actual = x_inicio
             for i, col in enumerate(columnas):
-                c.drawString(35 + i * col_width, y, col)
+                c.drawString(x_actual + 2, y, col)
+                x_actual += column_widths[i]
+
             y -= 25
+           
             total = 0
             for row in self.tabla_datos_previos:
                 total += 1
@@ -301,9 +391,30 @@ class ReporteEmpleados:
                 c.rect(30, y - 15, width - 60, 20, stroke=0, fill=1)
                 c.setFillColorRGB(0, 0, 0)
                 c.setFont("Helvetica", 7)
-                for i, val in enumerate(row):
-                    c.drawString(35 + i * col_width, y, str(val))
-                y -= 20
+
+                # Reorganizar valores para coincidir con columnas nuevas
+                # row = (idx, id, identidad, nombre_completo, apellido, telefono, ...)
+                # eliminamos apellido y rol
+                valores_pdf = [
+                    row[0],    # #
+                    row[1],    # ID
+                    row[2],    # Identidad
+                    row[3],    # Nombre completo
+                    row[5],    # Teléfono
+                    row[6],    # Profesión
+                    row[7],    # Tipo Contrato
+                    row[8],    # Dependencia
+                    row[9],    # Cargo
+                    row[10],   # Usuario
+                    row[12]    # Unidad
+                ]
+
+                for i, val in enumerate(valores_pdf):
+                    texto = str(val)
+                    c.drawString(x_inicio + sum(column_widths[:i]), y, texto)
+
+                y -= 18  # separacion fija por fila
+
                 if y < 40:
                     c.showPage()
                     y = height - 40

@@ -885,7 +885,7 @@ class PantallaPrincipal:
         conteos = {
             "Permanente": 0,
             "Especial": 0,
-           "Jornal": 0
+            "Jornal": 0
         }
 
         try:
@@ -899,8 +899,18 @@ class PantallaPrincipal:
             """)
 
             for tipo, total in cur.fetchall():
-                if tipo in conteos:
-                    conteos[tipo] += total
+
+                if tipo is None:
+                    continue  # Ignorar valores NULL
+
+                tipo = tipo.strip().lower()
+
+                if tipo == "contrato permanente":
+                    conteos["Permanente"] = total
+                elif tipo == "contrato especial":
+                    conteos["Especial"] = total
+                elif tipo == "contrato jornal":
+                    conteos["Jornal"] = total
 
             cur.close()
             conn.close()
@@ -909,7 +919,7 @@ class PantallaPrincipal:
             print(f"[ERROR] No se pudieron obtener los conteos: {e}")
 
         return conteos
-
+    
 # ---------- MAIN ----------
 if __name__ == "__main__":
     root = tk.Tk()

@@ -296,6 +296,38 @@ class AdminUsuarios(tk.Toplevel):
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo generar el PDF:\n{e}")
 
+    def on_doble_click_reciente(self, event):
+        sel = self.tree_recientes.selection()
+        if not sel:
+            return
+
+        item = self.tree_recientes.item(sel[0])
+        usuario, estado, fecha = item["values"]
+
+        # Guardar el item seleccionado para que cambiar_estado_solicitud lo use
+        self.selected_solicitud = item
+
+        # Crear ventana
+        win = tk.Toplevel(self)
+        win.title("Acción sobre la solicitud")
+        win.geometry("350x150")
+        win.transient(self)
+        win.grab_set()
+
+        ttk.Label(win, text=f"¿Qué deseas hacer con la solicitud de:\n{usuario}?", font=("Segoe UI", 11)).pack(pady=10)
+
+        def aprobar():
+            self.cambiar_estado_solicitud("aprobada")
+            win.destroy()
+
+        def rechazar():
+            self.cambiar_estado_solicitud("rechazada")
+            win.destroy()
+
+        ttk.Button(win, text="Aprobar", command=aprobar).pack(fill="x", padx=20, pady=5)
+        ttk.Button(win, text="Rechazar", command=rechazar).pack(fill="x", padx=20, pady=5)
+        ttk.Button(win, text="Cancelar", command=win.destroy).pack(fill="x", padx=20, pady=5)
+
     # -------------------- TAB SOLICITUDES --------------------
     def init_tab_solicitudes(self):
         ttk.Label(self.tab_solicitudes, text="Solicitudes de Actualización", font=("Segoe UI", 14, "bold")).pack(pady=5)
@@ -306,32 +338,38 @@ class AdminUsuarios(tk.Toplevel):
         for col, width in zip(("usuario","estado","fecha"), (250,120,180)):
             self.tree_recientes.heading(col, text=col.capitalize())
             self.tree_recientes.column(col, width=width, anchor="center")
+
+        # Luego de definir todas las columnas, hacer los bindings una sola vez
         self.tree_recientes.pack(fill="x", padx=10)
-        self.tree_recientes.bind("<<TreeviewSelect>>", self.on_tree_select_solicitud)
+        self.tree_recientes.bind("<<TreeviewSelect>>", self.on_tree_select_recientes)
+        self.tree_recientes.bind("<Double-1>", self.on_doble_click_reciente)
 
         # Tabla todas las solicitudes
         ttk.Label(self.tab_solicitudes, text="Todas", font=("Segoe UI", 12, "bold")).pack(pady=2)
         self.tree_solicitudes = ttk.Treeview(self.tab_solicitudes, columns=("usuario","estado","fecha"), show="headings", height=8)
+
         for col, width in zip(("usuario","estado","fecha"), (250,120,180)):
             self.tree_solicitudes.heading(col, text=col.capitalize())
             self.tree_solicitudes.column(col, width=width, anchor="center")
         self.tree_solicitudes.pack(fill="x", padx=10)
         self.tree_solicitudes.bind("<<TreeviewSelect>>", self.on_tree_select_solicitud)
 
-        # Tabla eliminadas recientemente
+        # Tabla eliminadas recientemente 
         ttk.Label(self.tab_solicitudes, text="Eliminadas", 
                   font=("Segoe UI", 12, "bold")).pack(pady=2)
 
         self.tree_eliminadas = ttk.Treeview(
             self.tab_solicitudes,
-            columns=("usuario",),
+            columns=("usuario","estado","fecha_eliminada","eliminado_por"),
             show="headings",
             height=3
-        ) 
-        self.tree_eliminadas.heading("usuario", text="Usuario")
-        self.tree_eliminadas.column("usuario", width=200, anchor="center")
+        )
 
-        self.tree_eliminadas.pack(fill="x", padx=10, pady=(0,10))
+        for col, width in zip(("usuario","estado","fecha_eliminada","eliminado_por"), (150,100,150,150)):
+            self.tree_eliminadas.heading(col, text=col.capitalize())
+            self.tree_eliminadas.column(col, width=width, anchor="center")
+
+        self.tree_eliminadas.pack(fill="x", padx=10, pady=5)
 
         # Botones
         btn_frame = tk.Frame(self.tab_solicitudes, bg="#f7f9fb")
@@ -349,6 +387,7 @@ class AdminUsuarios(tk.Toplevel):
                   width=12, relief="flat", command=self.destroy).pack(side="left", padx=5)
 
         self.cargar_solicitudes()
+        self.after(2000, self.cargar_solicitudes)
 
     def cargar_solicitudes(self):
         # Limpiar tablas
@@ -373,18 +412,35 @@ class AdminUsuarios(tk.Toplevel):
             """)
             datos = cur.fetchall()
 
-            # Recientes solo pendientes
+            # Para recientes pendientes 
             pendientes = [d for d in datos if d[1].lower() == "pendiente"]
             for usuario, estado, fecha in pendientes:
                 fecha_str = fecha.strftime("%y/%m/%d - %H:%M") if fecha else ""
                 row_id = self.tree_recientes.insert("", "end", values=(usuario, estado, fecha_str))
                 self.color_fila(self.tree_recientes, row_id, estado)
 
-            # Todas las solicitudes
+            # Para todas
             for usuario, estado, fecha in datos:
                 fecha_str = fecha.strftime("%y/%m/%d - %H:%M") if fecha else ""
                 row_id = self.tree_solicitudes.insert("", "end", values=(usuario, estado, fecha_str))
                 self.color_fila(self.tree_solicitudes, row_id, estado)
+
+            # Limpiar tabla eliminadas
+            for row in self.tree_eliminadas.get_children():
+                self.tree_eliminadas.delete(row)
+
+            # Cargar eliminadas
+            cur.execute("""
+                SELECT usuario, estado, fecha_eliminada, eliminado_por
+                FROM solicitudes_actualizacion
+                WHERE estado = 'inactivo'
+                ORDER BY fecha_eliminada DESC
+            """)
+            eliminadas = cur.fetchall()
+
+            for usuario, estado, fecha_eliminada, eliminado_por in eliminadas:
+                fecha_str = fecha_eliminada.strftime("%y/%m/%d - %H:%M") if fecha_eliminada else ""
+                self.tree_eliminadas.insert("", "end", values=(usuario, estado, fecha_str, eliminado_por))
 
             cur.close()
             conn.close()
@@ -406,8 +462,9 @@ class AdminUsuarios(tk.Toplevel):
     def eliminar_solicitud_actual(self):
         if not self.selected_solicitud:
             return
-        
+
         usuario, estado, fecha_str = self.selected_solicitud["values"]
+        fecha_solicitud = datetime.strptime(fecha_str, "%y/%m/%d - %H:%M")
 
         if not messagebox.askyesno("Confirmar", "¿Desea eliminar esta solicitud?"):
             return
@@ -416,22 +473,24 @@ class AdminUsuarios(tk.Toplevel):
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
 
-            fecha_solicitud = datetime.strptime(fecha_str, "%y/%m/%d - %H:%M")
+            eliminado_por = self.usuario_actual
 
-            # ---- BORRAR DE BD ----
             cur.execute("""
-                DELETE FROM solicitudes_actualizacion 
-                WHERE usuario=%s AND fecha_solicitud=%s
-            """, (usuario, fecha_solicitud))
+                UPDATE solicitudes_actualizacion
+                SET estado='inactivo', fecha_eliminada=NOW(), eliminado_por=%s
+                WHERE usuario = %s
+                    AND DATE_TRUNC('minute', fecha_solicitud) = DATE_TRUNC('minute', %s)
+            """, (eliminado_por, usuario, fecha_solicitud))
 
             conn.commit()
             cur.close()
             conn.close()
 
-            # ---- AGREGAR A TABLA DE ELIMINADAS ----
-            self.tree_eliminadas.insert("", "end", values=(usuario,))
+            # Insertar en tabla eliminadas
+            self.tree_eliminadas.insert("", "end",
+                values=(usuario, "inactivo", datetime.now().strftime("%y/%m/%d - %H:%M"), eliminado_por)
+            )
 
-            # ---- REFRESCAR OTRAS TABLAS ----
             self.cargar_solicitudes()
 
         except Exception as e:
@@ -442,14 +501,13 @@ class AdminUsuarios(tk.Toplevel):
         sel = widget.selection()
 
         if not sel:
+            self.selected_solicitud = None
             self.btn_aceptar.config(state="disabled")
             self.btn_rechazar.config(state="disabled")
             self.btn_eliminar.config(state="disabled")
-            self.selected_solicitud = None
             return
 
         self.selected_solicitud = widget.item(sel[0])
-
         estado = self.selected_solicitud["values"][1].lower()
 
         # Solo habilitar aceptar/rechazar si está pendiente
@@ -463,7 +521,22 @@ class AdminUsuarios(tk.Toplevel):
         # Eliminar siempre habilitado
         self.btn_eliminar.config(state="normal")
 
+    def on_tree_select_recientes(self, event):
+        sel = self.tree_recientes.selection()
+        if sel:
+            self.selected_solicitud = self.tree_recientes.item(sel[0])
+            self.btn_aceptar.config(state="normal")
+            self.btn_rechazar.config(state="normal")
+        else:
+            self.selected_solicitud = None
+            self.btn_aceptar.config(state="disabled")
+            self.btn_rechazar.config(state="disabled")
+
     def cambiar_estado_solicitud(self, nuevo_estado):
+        """
+        Actualiza directamente el campo 'estado' de la solicitud seleccionada.
+        También habilita editable=TRUE si se aprueba.
+        """
         if not self.selected_solicitud:
             return
 
@@ -474,46 +547,34 @@ class AdminUsuarios(tk.Toplevel):
             conn = psycopg2.connect(**DB_CONFIG)
             cur = conn.cursor()
 
-            # Actualizar el estado en la BD y la fecha de aceptación
+            # Actualizar estado de la solicitud
             cur.execute("""
                 UPDATE solicitudes_actualizacion
-                SET estado=%s, fecha_aceptacion=NOW()
-                WHERE usuario=%s AND fecha_solicitud=%s
+                SET estado = %s,
+                    fecha_aceptacion = NOW()
+                WHERE usuario = %s
+                    AND DATE_TRUNC('minute', fecha_solicitud) = DATE_TRUNC('minute', %s)
             """, (nuevo_estado, usuario, fecha_solicitud))
 
+            # ------------------- NUEVO: habilitar editable si aprobada -------------------
+            if nuevo_estado.lower() == "aprobada":
+                cur.execute("""
+                    UPDATE colaborador
+                    SET editable=TRUE
+                    WHERE usuario=%s
+                """, (usuario,))
+
             conn.commit()
             cur.close()
             conn.close()
 
-            # Refrescar tablas para reflejar cambios inmediatamente
+            messagebox.showinfo("Éxito", f"Solicitud actualizada: {nuevo_estado}")
+
+            # Recargar tablas visuales
             self.cargar_solicitudes()
 
-            # Deshabilitar botones hasta que se seleccione otra fila
-            self.btn_aceptar.config(state="disabled")
-            self.btn_rechazar.config(state="disabled")
-            self.btn_eliminar.config(state="disabled")
-
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo cambiar estado:\n{e}")
-
-    def eliminar_solicitud_actual(self):
-        if not self.selected_solicitud:
-            return
-        usuario, estado, fecha_str = self.selected_solicitud["values"]
-        if not messagebox.askyesno("Confirmar", "¿Desea eliminar esta solicitud?"):
-            return
-        try:
-            conn = psycopg2.connect(**DB_CONFIG)
-            cur = conn.cursor()
-            fecha_solicitud = datetime.strptime(fecha_str, "%y/%m/%d - %H:%M")
-            cur.execute("DELETE FROM solicitudes_actualizacion WHERE usuario=%s AND fecha_solicitud=%s",
-                        (usuario, fecha_solicitud))
-            conn.commit()
-            cur.close()
-            conn.close()
-            self.cargar_solicitudes()
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo eliminar solicitud:\n{e}")
+            messagebox.showerror("Error", f"No se pudo actualizar el estado:\n{e}")
 
     # -------------------- TAB HISTORIAL --------------------
     def init_tab_historial(self):

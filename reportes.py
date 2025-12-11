@@ -93,15 +93,40 @@ class ReportesWindow:
         self.entry_buscar_permiso.grid(row=0, column=1, padx=5)
         self.entry_buscar_permiso.bind("<KeyRelease>", lambda e: self.cargar_tabla_permisos())  # binding
 
-        tk.Label(filtros_frame, text="Tipo Permiso:", bg="#ffffff").grid(row=0, column=2, padx=5, pady=5)
+        # ---- Identidad: Combobox editable con autocompletado ----
+        tk.Label(filtros_frame, text="Identidad:", bg="#ffffff").grid(row=0, column=2, padx=5, pady=5)
+        self.perm_identidad_var = tk.StringVar()
+        # Cargar lista de identidades desde la base o una variable predefinida
+        self.lista_identidades = self.obtener_lista_identidades()  # función que definiremos abajo
+        self.entry_identidad_perm = ttk.Combobox(filtros_frame, textvariable=self.perm_identidad_var,
+                                                 values=self.lista_identidades, state="normal", width=20)
+        self.entry_identidad_perm.grid(row=0, column=3, padx=5)
+
+        # Filtrado dinámico mientras se escribe
+        def filtrar_identidad(*args):
+            texto = self.perm_identidad_var.get().lower()
+            filtradas = [i for i in self.lista_identidades if texto in i.lower()]
+            self.entry_identidad_perm['values'] = filtradas
+            self.cargar_tabla_permisos()
+
+        self.perm_identidad_var.trace_add("write", filtrar_identidad)
+        self.entry_identidad_perm.bind("<<ComboboxSelected>>", lambda e: self.cargar_tabla_permisos())
+
+        tk.Label(filtros_frame, text="Tipo Permiso:", bg="#ffffff").grid(row=0, column=4, padx=5, pady=5)
         self.perm_tipo_var = tk.StringVar()
-        ttk.Entry(filtros_frame, textvariable=self.perm_tipo_var, width=15).grid(row=0, column=3, padx=5)
+        ttk.Entry(filtros_frame, textvariable=self.perm_tipo_var, width=15).grid(row=0, column=5, padx=5)
 
-        tk.Label(filtros_frame, text="Estado:", bg="#ffffff").grid(row=0, column=4, padx=5, pady=5)
+        tk.Label(filtros_frame, text="Estado:", bg="#ffffff").grid(row=0, column=6, padx=5, pady=5)
         self.perm_estado_var = tk.StringVar()
-        ttk.Entry(filtros_frame, textvariable=self.perm_estado_var, width=15).grid(row=0, column=5, padx=5)
+        ttk.Entry(filtros_frame, textvariable=self.perm_estado_var, width=15).grid(row=0, column=7, padx=5)
 
-        ttk.Button(filtros_frame, text="Limpiar", command=self.limpiar_filtros_permisos).grid(row=0, column=6, padx=5)
+        # ---- bindings ----
+        self.entry_buscar_tipo_perm = filtros_frame.grid_slaves(row=0, column=3)[0]
+        self.entry_buscar_estado_perm = filtros_frame.grid_slaves(row=0, column=5)[0]
+        self.entry_buscar_tipo_perm.bind("<KeyRelease>", lambda e: self.cargar_tabla_permisos())
+        self.entry_buscar_estado_perm.bind("<KeyRelease>", lambda e: self.cargar_tabla_permisos())
+
+        ttk.Button(filtros_frame, text="Limpiar", command=self.limpiar_filtros_permisos).grid(row=0, column=8, padx=5)
 
         # --- TABLA ---
         self.tree_permisos_frame = tk.Frame(self.tab_permisos, bg="#ffffff")
@@ -129,7 +154,21 @@ class ReportesWindow:
 
         self.cargar_tabla_permisos()
 
+    def obtener_lista_identidades(self):
+        # Conecta DB y obtiene todas las identidades
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("SELECT identidad FROM colaborador ORDER BY identidad")
+            rows = cur.fetchall()
+            conn.close()
+            return [r[0] for r in rows]
+        except:
+            return []
+
     def limpiar_filtros_permisos(self):
+        self.perm_identidad_var.set("")
+        self.entry_identidad_perm['values'] = self.lista_identidades
         self.perm_nombre_var.set("")
         self.perm_tipo_var.set("")
         self.perm_estado_var.set("")
@@ -150,6 +189,9 @@ class ReportesWindow:
                    FROM permisos_dias_laborales WHERE 1=1"""
         params = []
 
+        if self.perm_identidad_var.get():
+            query += " AND identidad ILIKE %s"
+            params.append(f"%{self.perm_identidad_var.get()}%")
         if self.perm_nombre_var.get():
             query += " AND nombre_completo ILIKE %s"
             params.append(f"%{self.perm_nombre_var.get()}%")
@@ -209,49 +251,6 @@ class ReportesWindow:
         self.vac_nombre_var = tk.StringVar()
         self.entry_buscar_vac = ttk.Entry(filtros_frame, textvariable=self.vac_nombre_var, width=20)
         self.entry_buscar_vac.grid(row=0, column=1, padx=5)
-        self.entry_buscar_vac.bind("<KeyRelease>", lambda e: self.cargar_tabla_vacaciones())
-
-        tk.Label(filtros_frame, text="Estado:", bg="#ffffff").grid(row=0, column=2, padx=5, pady=5)
-        self.vac_estado_var = tk.StringVar()
-        ttk.Entry(filtros_frame, textvariable=self.vac_estado_var, width=15).grid(row=0, column=3, padx=5)
-
-        ttk.Button(filtros_frame, text="Limpiar", command=self.limpiar_filtros_vacaciones).grid(row=0, column=4, padx=5)
-
-        # TABLA
-        self.tree_vac_frame = tk.Frame(self.tab_vacaciones, bg="#ffffff")
-        self.tree_vac_frame.pack(fill="both", expand=True, padx=10, pady=5)
-
-        columnas = ("#", "Identidad", "Nombre Completo", "Fecha Inicio", "Días a Gozar",
-                   "Días Solicitados", "Días Gozados", "Días Restantes", "Estado")
-
-        self.tree_vac = ttk.Treeview(self.tree_vac_frame, columns=columnas, show="headings", height=20)
-        for col in columnas:
-            self.tree_vac.heading(col, text=col)
-            self.tree_vac.column(col, width=120, anchor="center")
-        self.tree_vac.column("#", width=50)
-        self.tree_vac.pack(fill="both", expand=True, side="left")
-
-        scrollbar = ttk.Scrollbar(self.tree_vac_frame, orient="vertical", command=self.tree_vac.yview)
-        self.tree_vac.configure(yscroll=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-
-        # doble clic
-        self.tree_vac.bind("<Double-1>", self.mostrar_detalle_colaborador)
-
-        self.label_contador_vac = tk.Label(self.tab_vacaciones, text="", bg="#ffffff",
-                                           font=("Segoe UI", 12, "bold"))
-        self.label_contador_vac.pack(pady=5)
-
-        self.cargar_tabla_vacaciones()
-        
-    def build_tab_vacaciones(self):
-        filtros_frame = tk.Frame(self.tab_vacaciones, bg="#ffffff")
-        filtros_frame.pack(fill="x", pady=5, padx=10)
-
-        tk.Label(filtros_frame, text="Buscar Nombre:", bg="#ffffff").grid(row=0, column=0, padx=5, pady=5)
-        self.vac_nombre_var = tk.StringVar()
-        self.entry_buscar_vac = ttk.Entry(filtros_frame, textvariable=self.vac_nombre_var, width=20)
-        self.entry_buscar_vac.grid(row=0, column=1, padx=5)
         self.entry_buscar_vac.bind("<KeyRelease>", lambda e: self.cargar_tabla_vacaciones())  # binding
 
         tk.Label(filtros_frame, text="Estado:", bg="#ffffff").grid(row=0, column=2, padx=5, pady=5)
@@ -263,8 +262,8 @@ class ReportesWindow:
         self.tree_vac_frame = tk.Frame(self.tab_vacaciones, bg="#ffffff")
         self.tree_vac_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        columnas = ("#", "Identidad", "Nombre Completo", "Fecha Inicio", "Días a Gozar", "Días Solicitados",
-                    "Días Gozados", "Días Restantes", "Estado")
+        columnas = ("#", "Identidad", "Nombre Completo", "Fecha Inicio", "Días a Gozar",
+                    "Días Solicitados", "Días Gozados", "Días Restantes", "Estado", "colaborador_id")
         self.tree_vac = ttk.Treeview(self.tree_vac_frame, columns=columnas, show="headings", height=20)
         for col in columnas:
             self.tree_vac.heading(col, text=col)
@@ -290,7 +289,7 @@ class ReportesWindow:
         self.cargar_tabla_vacaciones()
     
     def cerrar_ventana(self):
-        self.destroy()  # cierra la ventana ReportesWindow
+        self.root.destroy()
 
     def cargar_tabla_vacaciones(self):
         # limpiar tabla
@@ -298,9 +297,9 @@ class ReportesWindow:
             self.tree_vac.delete(row)
 
         query = """
-            SELECT identidad, nombre_completo, fecha_inicio, dias_a_gozar, dias_solicitados,
-                   dias_gozados, dias_restantes, estado
-            FROM vacaciones
+            SELECT identidad, nombre_completo, fecha_inicio, dias_a_gozar, dias_solicitados, 
+                dias_gozados, dias_restantes, estado, colaborador_id
+            FROM vacaciones 
             WHERE 1=1
         """
         params = []
@@ -323,9 +322,8 @@ class ReportesWindow:
             conn.close()
 
             self.tabla_datos_vacaciones = []
-
             for idx, row in enumerate(rows, start=1):
-                values = (idx, *row)
+                values = (idx, *row)  # incluye colaborador_id como última columna
                 self.tree_vac.insert("", "end", values=values)
                 self.tabla_datos_vacaciones.append(values)
 
@@ -364,11 +362,13 @@ class ReportesWindow:
         styles = getSampleStyleSheet()
 
         # Logo
-        try:
-            logo = Image("logo_municipalidad.png", width=80, height=80)
+        import os
+        logo_path = os.path.join(os.getcwd(), "muni.jpg") 
+        if os.path.exists(logo_path):
+            from reportlab.platypus import Image
+            logo = Image(logo_path, width=80, height=80)
             elementos.append(logo)
-        except:
-            pass
+
         elementos.append(Spacer(1,10))
         elementos.append(Paragraph("Reporte Detallado del Colaborador", styles['Title']))
         elementos.append(Spacer(1,10))
@@ -382,6 +382,29 @@ class ReportesWindow:
         t_info.setStyle(TableStyle([('GRID',(0,0),(-1,-1),1,colors.black)]))
         elementos.append(t_info)
         elementos.append(Spacer(1,10))
+
+        # Si tabla origen es vacaciones, agregar datos vacacionales
+        # Si tabla origen es vacaciones, agregar datos vacacionales
+        if tabla_origen == self.tree_vac:
+            # Asumiendo fila_colaborador = [nombre_completo, identidad, cargo, dependencia, ...]
+            info.append(["Fecha Inicio", fila_colaborador[4] if len(fila_colaborador) > 4 else ""])
+            info.append(["Fecha Finalización", fila_colaborador[5] if len(fila_colaborador) > 5 else ""])
+            info.append(["Días Solicitados", fila_colaborador[6] if len(fila_colaborador) > 6 else ""])
+            info.append(["Días Gozados", fila_colaborador[7] if len(fila_colaborador) > 7 else ""])
+            info.append(["Días Restantes", fila_colaborador[8] if len(fila_colaborador) > 8 else ""])
+            info.append(["Caracter", fila_colaborador[9] if len(fila_colaborador) > 9 else ""])
+            info.append(["Motivo/Check", fila_colaborador[10] if len(fila_colaborador) > 10 else ""])
+            info.append(["Observaciones", fila_colaborador[11] if len(fila_colaborador) > 11 else ""])
+            info.append(["Comprobante", fila_colaborador[12] if len(fila_colaborador) > 12 else ""])
+
+        elementos.append(Spacer(1,20))
+        firmas = [["Firma Director", "", "Firma RH", "", "Firma Solicitante", "", "Firma Jefe Inmediato", ""]]
+        t_firmas = Table(firmas, colWidths=150, hAlign="CENTER")
+        t_firmas.setStyle(TableStyle([('LINEABOVE',(0,0),(0,0),1,colors.black),
+                                      ('LINEABOVE',(2,0),(2,0),1,colors.black),
+                                      ('LINEABOVE',(4,0),(4,0),1,colors.black),
+                                      ('LINEABOVE',(6,0),(6,0),1,colors.black)]))
+        elementos.append(t_firmas)
 
         # Tabla solicitudes
         datos_tree = [tree_detalle["columns"]]
@@ -468,6 +491,40 @@ class ReportesWindow:
         tk.Label(datos_frame, text=f"Cargo: {cargo}", bg="white").pack(anchor="w")
         tk.Label(datos_frame, text=f"Dependencia: {dependencia}", bg="white").pack(anchor="w")
 
+        # Datos adicionales (solo si tabla origen es vacaciones)
+        vac = None
+        if tabla_origen == self.tree_vac:
+        # traer detalles completos
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("""SELECT fecha_inicio, fecha_finalizacion, dias_a_gozar, dias_solicitados,
+                                  dias_gozados, dias_restantes, caracter, motivo, observaciones, comprobante_path
+                           FROM vacaciones
+                           WHERE colaborador_id=%s
+                           ORDER BY fecha_inicio DESC""", (colaborador_id,))
+            vac = cur.fetchone()
+            conn.close()
+
+        if vac:
+            info_vac_frame = tk.Frame(datos_frame, bg="white")
+            info_vac_frame.pack(anchor="w", pady=5)
+            tk.Label(info_vac_frame, text=f"Fecha Inicio: {vac[0]}", bg="white").pack(anchor="w")
+            tk.Label(info_vac_frame, text=f"Fecha Finalización: {vac[1]}", bg="white").pack(anchor="w")
+            tk.Label(info_vac_frame, text=f"Días a Gozar: {vac[2]}", bg="white").pack(anchor="w")
+            tk.Label(info_vac_frame, text=f"Días Solicitados: {vac[3]}", bg="white").pack(anchor="w")
+            tk.Label(info_vac_frame, text=f"Días Gozados: {vac[4]}", bg="white").pack(anchor="w")
+            tk.Label(info_vac_frame, text=f"Días Restantes: {vac[5]}", bg="white").pack(anchor="w")
+            tk.Label(info_vac_frame, text=f"Caracter: {vac[6]}", bg="white").pack(anchor="w")
+            tk.Label(info_vac_frame, text=f"Motivo/Check: {vac[7]}", bg="white").pack(anchor="w")
+            tk.Label(info_vac_frame, text=f"Observaciones: {vac[8]}", bg="white").pack(anchor="w")
+
+        # Comprobante
+        if vac[9]:
+            import webbrowser
+            def abrir_comprobante():
+                webbrowser.open(vac[9])
+            tk.Button(info_vac_frame, text="Abrir Comprobante", command=abrir_comprobante).pack(anchor="w", pady=2)
+
         # ----- TREE HORIZONTAL -----
         tree_frame = tk.Frame(detalle_win, bg="white")
         tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -490,7 +547,8 @@ class ReportesWindow:
         for col_name in columnas:
             tree_detalle.heading(col_name, text=col_name)
             tree_detalle.column(col_name, width=150, anchor="center")
-        tree_detalle.pack(fill="both", expand=True, side="left")
+
+        tree_detalle.pack(fill="both", expand=True, side="left")   # <-- AHORA SI
 
         scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree_detalle.yview)
         tree_detalle.configure(yscroll=scrollbar.set)

@@ -138,14 +138,11 @@ class ReportesU:
         for row in self.tree_permisos.get_children():
             self.tree_permisos.delete(row)
 
-        # 👈 Filtrar solo solicitudes del usuario_actual
-        query = """
-            SELECT identidad, nombre_completo, tipo_permiso, dias_solicitados,
+        query = """SELECT identidad, nombre_completo, tipo_permiso, dias_solicitados,
                    caracter, checks, estado, fecha_entrega, colaborador_id
-            FROM permisos_dias_laborales
-            WHERE usuario = %s
-        """
-        params = [self.usuario_actual]
+                   FROM permisos_dias_laborales
+                   WHERE creado_por = %s"""
+        params = [self.usuario_actual]  # 👈 filtrar solo las solicitudes de este usuario
 
         if self.perm_nombre_var.get():
             query += " AND nombre_completo ILIKE %s"
@@ -174,7 +171,7 @@ class ReportesU:
 
             self.label_contador_permisos.config(text=f"Total de solicitudes: {len(self.tabla_datos_permisos)}")
 
-            # Colores
+            # Colores por estado
             for item in self.tree_permisos.get_children():
                 estado = self.tree_permisos.item(item, "values")[7].lower()
                 if estado in ("aceptada", "aprobada"):
@@ -187,6 +184,10 @@ class ReportesU:
             self.tree_permisos.tag_configure("verde", background="#c6f5d9")
             self.tree_permisos.tag_configure("rojo", background="#f5c6c6")
             self.tree_permisos.tag_configure("gris", background="#e2e2e2")
+
+            # Ocultar columna colaborador_id
+            self.tree_permisos["displaycolumns"] = ("#", "Identidad", "Nombre Completo", "Tipo Permiso",
+                                                    "Días Solicitados", "Caracter", "Checks", "Estado", "Fecha Entrega")
 
         except Exception as e:
             self.label_contador_permisos.config(text=f"Error: {e}")
@@ -241,23 +242,20 @@ class ReportesU:
         self.cargar_tabla_vacaciones()
 
     def cargar_tabla_vacaciones(self):
-        # limpiar tabla
+        # Limpiar tabla
         for row in self.tree_vac.get_children():
             self.tree_vac.delete(row)
 
-        # 👈 Filtrar solo solicitudes del usuario_actual
         query = """
             SELECT identidad, nombre_completo, fecha_inicio, dias_a_gozar, dias_solicitados,
                    dias_gozados, dias_restantes, estado
             FROM vacaciones
-            WHERE usuario = %s
-        """
-        params = [self.usuario_actual]
+            WHERE usuario = %s"""
+        params = [self.usuario_actual]  # 👈 filtrar solo las solicitudes de este usuario
 
         if self.vac_nombre_var.get():
             query += " AND nombre_completo ILIKE %s"
             params.append(f"%{self.vac_nombre_var.get()}%")
-
         if self.vac_estado_var.get():
             query += " AND estado ILIKE %s"
             params.append(f"%{self.vac_estado_var.get()}%")
@@ -279,7 +277,7 @@ class ReportesU:
 
             self.label_contador_vac.config(text=f"Total de solicitudes: {len(self.tabla_datos_vacaciones)}")
 
-            # Colores
+            # Colores por estado
             for item in self.tree_vac.get_children():
                 estado = self.tree_vac.item(item, "values")[8].lower()
                 if estado in ("aceptada", "aprobada"):
@@ -293,13 +291,83 @@ class ReportesU:
             self.tree_vac.tag_configure("rojo", background="#f5c6c6")
             self.tree_vac.tag_configure("gris", background="#e2e2e2")
 
-            # ----- BOTONES PDF Y CERRAR -----
-            botones_frame = tk.Frame(detalle_win, bg="white")
-            botones_frame.pack(pady=10)
-            ttk.Button(botones_frame, text="Cerrar", command=detalle_win.destroy).pack(side="left", padx=10)
-            ttk.Button(botones_frame, text="Exportar a PDF",
-                       command=lambda: self.generar_pdf([nombre_completo, identidad, cargo, dependencia],
-                                                       tree_detalle, tabla_origen)).pack(side="left", padx=10)
-        
         except Exception as e:
             self.label_contador_vac.config(text=f"Error: {e}")
+
+    def mostrar_detalle_colaborador(self, event):
+        tree = event.widget
+        item_id = tree.focus()
+        if not item_id:
+            return
+
+        valores = tree.item(item_id, "values")
+        if not valores:
+            return
+
+        # ----- CREAR VENTANA -----
+        detalle_win = tk.Toplevel(self.root)
+        detalle_win.title("Detalle del Registro")
+        detalle_win.geometry("650x500")
+        detalle_win.configure(bg="white")
+        detalle_win.transient(self.root)
+        detalle_win.grab_set()
+
+        # ----- INFORMACIÓN -----
+        tk.Label(detalle_win, text="Detalle del Registro Seleccionado",
+                 font=("Segoe UI", 16, "bold"), bg="white").pack(pady=10)
+        
+        # ----- CARGAR FOTO DEL COLABORADOR -----
+        identidad = valores[1]  # Campo "Identidad"
+
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("SELECT foto FROM colaboradores WHERE identidad=%s", (identidad,))
+            result = cur.fetchone()
+            conn.close()
+
+            if result and result[0]:
+                import io
+                from PIL import Image, ImageTk
+        
+                img_bytes = io.BytesIO(result[0])
+                img = Image.open(img_bytes)
+                img = img.resize((130, 130))
+                foto = ImageTk.PhotoImage(img)
+
+                lbl_foto = tk.Label(detalle_win, image=foto, bg="white")
+                lbl_foto.image = foto
+                lbl_foto.pack(pady=10)
+
+        except Exception as e:
+            print("Error cargando foto:", e)
+
+        # tabla origen (permisos o vacaciones)
+        columnas = tree["columns"]
+
+        # Tabla simple para mostrar valores
+        frame_tabla = tk.Frame(detalle_win, bg="white")
+        frame_tabla.pack(pady=10, fill="both", expand=True)
+
+        tree_detalle = ttk.Treeview(frame_tabla, columns=("Campo", "Valor"), show="headings", height=12)
+        tree_detalle.heading("Campo", text="Campo")
+        tree_detalle.heading("Valor", text="Valor")
+        tree_detalle.column("Campo", width=180)
+        tree_detalle.column("Valor", width=400)
+        tree_detalle.pack(fill="both", expand=True, side="left")
+
+        scrollbar = ttk.Scrollbar(frame_tabla, orient="vertical", command=tree_detalle.yview)
+        tree_detalle.configure(yscroll=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+
+        for col, val in zip(columnas, valores):
+            tree_detalle.insert("", "end", values=(col, val))
+
+        # ----- BOTONES -----
+        botones_frame = tk.Frame(detalle_win, bg="white")
+        botones_frame.pack(pady=10)
+
+        ttk.Button(botones_frame, text="Cerrar", command=detalle_win.destroy).pack(side="left", padx=10)
+        ttk.Button(botones_frame, text="Exportar a PDF",
+                   command=lambda: self.generar_pdf([nombre_completo, identidad, cargo, dependencia],
+                                                tree_detalle, tabla_origen)).pack(side="left", padx=10)

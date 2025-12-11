@@ -52,6 +52,7 @@ class PantallaPrincipal:
 
         self.root = root
         self.usuario_actual = usuario_actual
+        self.detalle_abierto = None
         self.mostrar_toast_bienvenida = mostrar_toast_bienvenida and MOSTRAR_BIENVENIDA
 
         # Inicializar la variable de la ventana flotante
@@ -73,6 +74,8 @@ class PantallaPrincipal:
         if self.mostrar_toast_bienvenida:
             self.root.after(500, lambda: self.mostrar_notificacion(f"Bienvenido, {self.usuario_info.get('nombre', 'Usuario')}!"))
             MOSTRAR_BIENVENIDA = False
+
+        self.after_actualizar_dashboard = self.root.after(1000, self.actualizar_dashboard)
 
     def conectar_bd(self):
         return psycopg2.connect(**DB_CONFIG)
@@ -132,6 +135,8 @@ class PantallaPrincipal:
     def crear_panel_principal(self):
         self.panel_principal = tk.Frame(self.root, bg=BG)
         self.panel_principal.pack(fill="both", expand=True, side="right")
+        self.var_dias_ausencia = tk.StringVar()
+        self.var_dias_ausencia.set(self.calcular_dias_ausencia())
 
         # --- Encabezado superior ---
         header_frame = tk.Frame(self.panel_principal, bg=PANEL, height=100)
@@ -159,23 +164,31 @@ class PantallaPrincipal:
         cuadros_data = [
             ("📅 Días Trabajados", self.calcular_dias_trabajados(), "#1abc9c"),
             ("🏖️ Días Gozar", self.calcular_dias_a_gozar(), "#3498db"),
-            ("🕒 Días de Ausencia", self.calcular_dias_ausencia(), "#e67e22"),
+            ("🕒 Días de Ausencia", self.var_dias_ausencia, "#e67e22"),
             ("📅 Días Restantes", self.calcular_dias_restantes(), "#9b59b6"),
         ]
-
         cuadros_frame = tk.Frame(container, bg=BG)
         cuadros_frame.pack(fill="x", pady=(30, 20))
         cuadros_frame.grid_columnconfigure((0,1,2,3), weight=1)
+
+        # Variable para actualizar dinámicamente Dias de Ausencia
+        self.var_dias_ausencia = tk.StringVar(value=self.calcular_dias_ausencia())
 
         for i, (titulo, valor, color) in enumerate(cuadros_data):
             frame = tk.Frame(cuadros_frame, bg=color, height=100, width=200)
             frame.grid(row=0, column=i, padx=8, sticky="nsew")
             frame.pack_propagate(False)
 
+            # Label del título
             tk.Label(frame, text=titulo, bg=color, fg="white",
-                     font=("Segoe UI", 11, "bold")).pack(pady=(8,0))
-            tk.Label(frame, text=valor, bg=color, fg="white",
-                     font=("Segoe UI", 20, "bold")).pack(pady=(3,8))
+                    font=("Segoe UI", 11, "bold")).pack(pady=(8,0))
+
+            # Label del valor, dinámico con StringVar o valor fijo
+            valor_lbl = tk.Label(frame,
+                                textvariable=valor if isinstance(valor, tk.StringVar) else None,
+                                text=valor if not isinstance(valor, tk.StringVar) else None,
+                                font=("Arial", 18, "bold"), bg=color, fg="white")
+            valor_lbl.pack(pady=(3,8))
 
         # ---------------- PANEL DE SOLICITUDES ----------------
         solicitudes_frame = ttk.LabelFrame(container, text="Solicitudes", padding=10)
@@ -203,6 +216,11 @@ class PantallaPrincipal:
         tabla_frame.columnconfigure(0, weight=1)
         tabla_frame.rowconfigure(0, weight=1)
 
+        # Configurar colores según estado
+        self.tree.tag_configure("aprobada", background="#c8f7c5")   # verde claro
+        self.tree.tag_configure("rechazada", background="#f7c5c5")  # rojo claro
+        self.tree.tag_configure("pendiente", background="#e8e8e8")  # gris claro
+
         self.tree.bind("<Double-1>", self.ver_detalle_solicitud)
         self.cargar_solicitudes()
 
@@ -213,7 +231,7 @@ class PantallaPrincipal:
         datos_graficos = [
             ("Dias Trabajados", int(cuadros_data[0][1])),
             ("Dias Gozados", int(cuadros_data[1][1])),
-            ("Dias Pendientes", int(cuadros_data[2][1])),
+            ("Dias Pendientes", int(cuadros_data[2][1].get())),
             ("Dias Restantes", int(cuadros_data[3][1]))
         ]
 
@@ -306,7 +324,7 @@ class PantallaPrincipal:
             ("📆 Ausencias", self.mostrar_info_sistema),
             ("🏖️ Vacaciones", self.mostrar_vacaciones),
             ("📊 Reportes", self.mostrar_dashboard),
-            ("📊 Configuracion", self.configuracion_dashboard),
+            ("👤 Perfil", self.configuracion_dashboard),
             ("🔚 Salir", self.volver_login)
         ]
 
@@ -330,6 +348,35 @@ class PantallaPrincipal:
     # ============================================================
     # FUNCIONES AUXILIARES
     # ============================================================
+    def actualizar_dashboard(self):
+        try:
+            # Actualizar el label que muestra días de ausencia
+            if hasattr(self, "lbl_dias_ausencia"):
+                self.lbl_dias_ausencia.config(text=self.calcular_dias_ausencia())
+        except:
+            pass
+
+        # Volver a ejecutar dentro de 1 segundo
+        self.after_actualizar = self.root.after(1000, self.actualizar_dashboard)
+
+    def actualizar_dashboard(self):
+        # Actualiza dinámicamente el contador de días de ausencia
+        try:
+            nuevo_valor = self.calcular_dias_ausencia()
+            self.var_dias_ausencia.set(nuevo_valor)
+        except:
+            pass
+
+        # Repite cada segundo
+        self.after_actualizar_dashboard = self.root.after(1000, self.actualizar_dashboard)
+
+    def actualizar_tabla(self):
+        try:
+            self.cargar_solicitudes()
+        except:
+            pass
+        self.root.after(1000, self.actualizar_tabla)
+
     def calcular_dias_contrato(self):
         inicio = date(date.today().year, 1, 1)
         fin = date(date.today().year, 12, 31)
@@ -445,42 +492,64 @@ class PantallaPrincipal:
             conn = self.conectar_bd()
             cur = conn.cursor()
 
-            # obtener identidad o id del colaborador
+            # Obtener identidad e id del colaborador
             cur.execute("""
-                SELECT identidad, id
+                SELECT identidad, id 
                 FROM colaborador
                 WHERE usuario = %s
             """, (self.usuario_actual,))
-
             row = cur.fetchone()
+
             if not row:
                 conn.close()
                 return "0"
 
             identidad, colaborador_id = row
 
-            # buscar ausencias
+            # Traer SOLO aprobadas
             cur.execute("""
                 SELECT fecha_inicio, fecha_fin
                 FROM permisos_dias_laborales
-                WHERE colaborador_id = %s OR identidad = %s
+                WHERE (colaborador_id = %s OR identidad = %s)
+                AND estado = 'Aprobada'
+                ORDER BY fecha_inicio ASC
             """, (colaborador_id, identidad))
 
-            filas = cur.fetchall()
+            solicitudes = cur.fetchall()
             conn.close()
 
-            if not filas:
+            if not solicitudes:
                 return "0"
 
-            total_dias = 0
+            hoy = date.today()
 
-            for fi, ff in filas:
-                while fi <= ff:
-                    if fi.weekday() < 5:
-                        total_dias += 1
-                    fi += timedelta(days=1)
+            # ---- AGRUPAR BLOQUES CONSECUTIVOS ----
+            bloques = []
+            inicio_b = solicitudes[0][0]
+            fin_b = solicitudes[0][1]
 
-            return str(total_dias)
+            for fi, ff in solicitudes[1:]:
+                # Si la siguiente solicitud empieza justo al día siguiente → es consecutiva
+                if fi == fin_b + timedelta(days=1):
+                    fin_b = ff
+                else:
+                    bloques.append((inicio_b, fin_b))
+                    inicio_b = fi
+                    fin_b = ff
+
+            bloques.append((inicio_b, fin_b))
+
+            # ---- CALCULAR DÍAS RESTANTES ----
+            total_restante = 0
+
+            for fi, ff in bloques:
+                dia = max(fi, hoy)
+                while dia <= ff:
+                    if dia.weekday() < 5:     # Solo días hábiles L–V
+                        total_restante += 1
+                    dia += timedelta(days=1)
+
+            return str(total_restante)
 
         except Exception:
             return "0"
@@ -620,9 +689,9 @@ class PantallaPrincipal:
             cur.execute("""
                 SELECT v.id, c.identidad, 
                         CONCAT(c.nombre1, ' ', c.apellido1) AS nombre_usuario,
-                       'Vacaciones' AS tipo,
-                       c.cargo, c.dependencia,
-                       v.fecha_inicio AS fecha, v.estado
+                        'Vacaciones' AS tipo,
+                        c.cargo, c.dependencia,
+                        v.fecha_inicio AS fecha, v.estado
                 FROM vacaciones v
                 JOIN colaborador c ON v.colaborador_id = c.id
                 WHERE v.colaborador_id = %s
@@ -636,10 +705,23 @@ class PantallaPrincipal:
             for item in self.tree.get_children():
                 self.tree.delete(item)
 
-            # Insertar filas
+            # ---- Insertar todas las filas correctamente ----
             for fila in permisos_dias + vacaciones:
+
+                if len(fila) < 8:
+                    continue
+
+                estado = fila[7]
+
+                if estado == "Aprobada":
+                    tag = "aprobada"
+                elif estado == "Rechazada":
+                    tag = "rechazada"
+                else:
+                    tag = "pendiente"
+
                 self.tree.insert("", "end", values=(
-                    fila[0],   # #
+                    fila[0],   # id
                     fila[1],   # identidad
                     fila[2],   # usuario
                     fila[3],   # tipo
@@ -648,29 +730,58 @@ class PantallaPrincipal:
                     fila[6],   # fecha
                     fila[7],   # estado
                     "👁️"
-                ), tags=("pendiente",))
+                ), tags=(tag,))
 
-            # Colorear filas pendientes
-            self.tree.tag_configure("pendiente", background="#e0e0e0")
+            # Configurar colores una sola vez
+            self.tree.tag_configure("aprobada", background="#c8f7c5")   # verde
+            self.tree.tag_configure("rechazada", background="#f7c5c5")  # rojo
+            self.tree.tag_configure("pendiente", background="#fff4cc")  # amarillo
 
         except Exception as e:
             messagebox.showerror("Error", f"Ocurrió un problema al cargar solicitudes: {e}")
 
     def ver_detalle_solicitud(self, event):
+        # 1️⃣ Si ya hay una ventana abierta → no abrir otra
+        if self.detalle_abierto and self.detalle_abierto.winfo_exists():
+            self.detalle_abierto.lift()
+            return
+
         item = self.tree.selection()
         if not item:
             return
-        datos = self.tree.item(item, "values")
-        detalle = tk.Toplevel(self.root)
-        detalle.title(f"Solicitud #{datos[0]}")
-        detalle.geometry("400x300")
 
-        ttk.Label(detalle, text=f"👤 Usuario: {datos[1]}", font=("Segoe UI", 11)).pack(pady=5)
-        ttk.Label(detalle, text=f"📋 Tipo: {datos[2]}", font=("Segoe UI", 11)).pack(pady=5)
-        ttk.Label(detalle, text=f"📅 Fecha: {datos[3]}", font=("Segoe UI", 11)).pack(pady=5)
-        ttk.Label(detalle, text=f"📝 Descripción:", font=("Segoe UI", 11, "bold")).pack(pady=5)
-        tk.Message(detalle, text=datos[4], width=350).pack(pady=5)
-        ttk.Label(detalle, text=f"🔖 Estado: {datos[5]}", font=("Segoe UI", 11)).pack(pady=10)
+        datos = self.tree.item(item, "values")
+
+        # 2️⃣ Crear ventana única
+        self.detalle_abierto = tk.Toplevel(self.root)
+        detalle = self.detalle_abierto
+        detalle.title(f"Solicitud #{datos[0]}")
+        # Centrado automático
+        detalle.update_idletasks()
+        w = 420
+        h = 380
+        x = (detalle.winfo_screenwidth() // 2) - (w // 2)
+        y = (detalle.winfo_screenheight() // 2) - (h // 2)
+        detalle.geometry(f"{w}x{h}+{x}+{y}")
+
+        ttk.Label(detalle, text=f"👤 Usuario: {datos[2]}", font=("Segoe UI", 11, "bold")).pack(pady=4)
+        ttk.Label(detalle, text=f"🆔 Identidad: {datos[1]}", font=("Segoe UI", 10)).pack(pady=3)
+        ttk.Label(detalle, text=f"💼 Cargo: {datos[4]}", font=("Segoe UI", 10)).pack(pady=3)
+        ttk.Label(detalle, text=f"🏢 Dependencia: {datos[5]}", font=("Segoe UI", 10)).pack(pady=3)
+        ttk.Label(detalle, text=f"📋 Tipo: {datos[3]}", font=("Segoe UI", 10)).pack(pady=3)
+        if datos[3] == "Días Laborales":
+            ttk.Label(detalle, text=f"📅 Fecha entrega: {datos[6]}", font=("Segoe UI", 10)).pack(pady=3)
+         # Para ambos tipos
+        ttk.Label(detalle, text=f"📅 Fecha inicio: {datos[6]}", font=("Segoe UI", 10)).pack(pady=3)
+        ttk.Label(detalle, text=f"📅 Fecha fin: {datos[6]}", font=("Segoe UI", 10)).pack(pady=3)
+        ttk.Label(detalle, text=f"🔖 Estado: {datos[7]}", font=("Segoe UI", 10, "bold")).pack(pady=8)
+
+        # 3️⃣ Cuando la ventana se cierre → permitir abrir otra
+        detalle.protocol("WM_DELETE_WINDOW", lambda: self.cerrar_detalle(detalle))
+
+    def cerrar_detalle(self, ventana):
+        ventana.destroy()
+        self.detalle_abierto = None
 
     # ---------- NOTIFICACIÓN TIPO TOAST ----------
     def mostrar_notificacion(self, mensaje):

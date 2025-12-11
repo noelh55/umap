@@ -13,6 +13,7 @@ from datetime import date, timedelta
 import psycopg2
 from editarcolaborador import App
 from tkinter import ttk, filedialog
+import subprocess
 
 # ---- Configuración PostgreSQL ----
 DB_CONFIG = {
@@ -108,16 +109,16 @@ class ColaboradorWindow:
 
         tk.Label(fila1, text="Dependencia:", bg=BG, fg=TEXT_COLOR, font=("Segoe UI", 10, "bold")).grid(row=0, column=4, padx=8)
         # Combobox editable con lista cargada de BD
-        dependencia_cb = ttk.Combobox(fila1, textvariable=self.dependencia_var,
-                                      values=self.lista_dependencias, state="normal", width=25)
-        dependencia_cb.grid(row=0, column=5, padx=8)
-        dependencia_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
+        self.dependencia_cb = ttk.Combobox(fila1, textvariable=self.dependencia_var,
+                                   values=self.lista_dependencias, state="normal", width=25)
+        self.dependencia_cb.grid(row=0, column=5, padx=8)
+        self.dependencia_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
 
         tk.Label(fila1, text="Cargo:", bg=BG, fg=TEXT_COLOR, font=("Segoe UI", 10, "bold")).grid(row=0, column=6, padx=8)
-        cargo_cb = ttk.Combobox(fila1, textvariable=self.cargo_var,
-                                values=self.lista_cargos, state="normal", width=25)
-        cargo_cb.grid(row=0, column=7, padx=8)
-        cargo_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
+        self.cargo_cb = ttk.Combobox(fila1, textvariable=self.cargo_var,
+                             values=self.lista_cargos, state="normal", width=25)
+        self.cargo_cb.grid(row=0, column=7, padx=8)
+        self.cargo_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
 
         for col in range(8):
             fila1.grid_columnconfigure(col, weight=1)
@@ -131,19 +132,16 @@ class ColaboradorWindow:
 
          # Identidad: Combobox editable (se puede escribir manualmente)
         tk.Label(fila2, text="Identidad:", bg=BG, fg=TEXT_COLOR, font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=8)
-        identidad_cb = ttk.Combobox(fila2, textvariable=self.identidad_var,
-                                    values=self.lista_identidades, state="normal", width=25)
-        identidad_cb.grid(row=0, column=3, padx=8)
-        identidad_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
-
-        identidad_cb.grid(row=0, column=3, padx=8)
-        identidad_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
+        self.identidad_cb = ttk.Combobox(fila2, textvariable=self.identidad_var,
+                                 values=self.lista_identidades, state="normal", width=25)
+        self.identidad_cb.grid(row=0, column=3, padx=8)
+        self.identidad_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
 
         tk.Label(fila2, text="Nombre:", bg=BG, fg=TEXT_COLOR, font=("Segoe UI", 10, "bold")).grid(row=0, column=4, padx=8)
-        nombre_cb = ttk.Combobox(fila2, textvariable=self.nombre_var,
-                                 values=self.lista_nombres_completos, state="normal", width=30)
-        nombre_cb.grid(row=0, column=5, padx=8)
-        nombre_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
+        self.nombre_cb = ttk.Combobox(fila2, textvariable=self.nombre_var,
+                              values=self.lista_nombres_completos, state="normal", width=30)
+        self.nombre_cb.grid(row=0, column=5, padx=8)
+        self.nombre_cb.bind("<<ComboboxSelected>>", lambda e: self.actualizar_tabla())
 
          # ---- Sueldo: combobox de rangos + min/max manual ----
         tk.Label(fila2, text="Sueldo (filtro):", bg=BG, fg=TEXT_COLOR, font=("Segoe UI", 10, "bold")).grid(row=0, column=6, padx=8)
@@ -217,16 +215,49 @@ class ColaboradorWindow:
         btns_frame = tk.Frame(main_frame, bg=BG)
         btns_frame.pack(pady=20)
 
-        tk.Button(btns_frame, text="📄 Exportar PDF", bg="#e74c3c", fg="white", font=("Segoe UI", 11, "bold"),
-                relief="flat", width=18, height=2, command=self.exportar_pdf).grid(row=0, column=0, padx=15)
-        tk.Button(btns_frame, text="📊 Exportar Excel", bg="#2ecc71", fg="white", font=("Segoe UI", 11, "bold"),
-                relief="flat", width=18, height=2, command=self.exportar_excel).grid(row=0, column=1, padx=15)
-        #tk.Button(btns_frame, text="🖨️ Imprimir", bg="#3498db", fg="white", font=("Segoe UI", 11, "bold"),
-                #relief="flat", width=18, height=2, command=self.imprimir_pdf).grid(row=0, column=2, padx=15)
-        tk.Button(btns_frame, text="🧹 Limpiar Filtros", bg="#f1c40f", fg="black", font=("Segoe UI", 11, "bold"),
-                relief="flat", width=18, height=2, command=self.limpiar).grid(row=0, column=3, padx=15)
-        tk.Button(btns_frame, text="↩️ Regresar", bg="#9b59b6", fg="white", font=("Segoe UI", 11, "bold"),
-                relief="flat", width=18, height=2, command=self.volver_main).grid(row=0, column=4, padx=15)
+        btn_color_default = "#bdc3c7"  # gris claro
+        btn_color_hover = "#5dade2"    # azul claro
+ 
+        def on_enter(e, btn):
+            btn.configure(bg=btn_color_hover)
+
+        def on_leave(e, btn):
+            btn.configure(bg=btn_color_default)
+
+        btn_pdf = tk.Button(btns_frame, text="📄 Exportar PDF", bg=btn_color_default, fg="white",
+                    font=("Segoe UI", 11, "bold"), relief="flat", width=18, height=2,
+                    command=self.exportar_pdf)
+        btn_pdf.grid(row=0, column=0, padx=15)
+        btn_pdf.bind("<Enter>", lambda e: on_enter(e, btn_pdf))
+        btn_pdf.bind("<Leave>", lambda e: on_leave(e, btn_pdf))
+
+        btn_excel = tk.Button(btns_frame, text="📊 Exportar Excel", bg=btn_color_default, fg="white", 
+                      font=("Segoe UI", 11, "bold"), relief="flat", width=18, height=2,
+                      command=self.exportar_excel)
+        btn_excel.grid(row=0, column=1, padx=15)
+        btn_excel.bind("<Enter>", lambda e: on_enter(e, btn_excel))
+        btn_excel.bind("<Leave>", lambda e: on_leave(e, btn_excel))
+
+        btn_limpiar = tk.Button(btns_frame, text="🧹 Limpiar Filtros", bg=btn_color_default, fg="black",
+                        font=("Segoe UI", 11, "bold"), relief="flat", width=18, height=2,
+                        command=self.limpiar)
+        btn_limpiar.grid(row=0, column=3, padx=15)
+        btn_limpiar.bind("<Enter>", lambda e: on_enter(e, btn_limpiar))
+        btn_limpiar.bind("<Leave>", lambda e: on_leave(e, btn_limpiar))
+
+        btn_regresar = tk.Button(btns_frame, text="↩️ Regresar", bg=btn_color_default, fg="white",
+                         font=("Segoe UI", 11, "bold"), relief="flat", width=18, height=2,
+                         command=self.volver_main)
+        btn_regresar.grid(row=0, column=4, padx=15)
+        btn_regresar.bind("<Enter>", lambda e: on_enter(e, btn_regresar))
+        btn_regresar.bind("<Leave>", lambda e: on_leave(e, btn_regresar))
+
+        # Refrescar tabla cada segundo
+        def refrescar_tabla_periodica():
+            self.actualizar_estados_bd()
+            self.actualizar_tabla()
+            self.master.after(1000, refrescar_tabla_periodica)
+        refrescar_tabla_periodica()
 
         # ---- Actualizar estado automático ----
         self.actualizar_estados_bd()
@@ -381,16 +412,16 @@ class ColaboradorWindow:
             emp_estado = (estado or "").strip().lower()
             if not emp_estado:
                 if ff_date and ff_date < date.today():
-                    emp_estado = "inactivo"
+                    emp_estado = "Inactivo"
                 else:
-                    emp_estado = "activo"
-            # 1) Filtrar por estado
-            if estado_filtro and estado_filtro != "Todos":
+                    emp_estado = "Activo"
+            # 1) Filtrar por estado (mostrar todos si estado_filtro es "Todos")
+            if estado_filtro != "Todos":
                 if emp_estado != estado_filtro.lower():
                     continue
 
-            # 2) Filtrar por tipo de contrato
-            if tipo_filtro and tipo_filtro != "Todos":
+            # 2) Filtrar por tipo de contrato (mostrar todos si tipo_filtro es "Todos")
+            if tipo_filtro != "Todos":
                 if not tipo_contrato or str(tipo_contrato).strip().lower() != tipo_filtro.lower():
                     continue
 
@@ -437,52 +468,43 @@ class ColaboradorWindow:
 
     def actualizar_tabla(self):
         # Limpiar tabla
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        for i in self.tree.get_children():
+            self.tree.delete(i)
 
-        empleados = self.obtener_empleados()
-        filtrados = self.filtrar_empleados(empleados)
+        try:
+            conn = conectar_bd()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT id, identidad, nombre1 || ' ' || nombre2 || ' ' || apellido1 || ' ' || apellido2 AS nombre,
+                       tipo_contrato, dependencia, cargo, fecha_inicio, fecha_finalizacion, sueldo, estado
+                FROM colaborador
+                ORDER BY id
+            """)
+            filas = cur.fetchall()
+            conn.close()
 
-        activos = 0
-        inactivos = 0
-
-        # ---- Insertar filas ----
-        for i, emp in enumerate(filtrados, start=1):
-            vals = (i,) + emp
-            item_id = self.tree.insert("", "end", values=vals)
-
-            # Determinar estado de cada empleado
-            estado_emp = str(emp[-1]).strip().lower() if emp[-1] else ""
-            fecha_fin_emp = emp[7] if len(emp) > 7 else None  # ajustar índice según tu tabla
-
-            if not estado_emp or estado_emp == "":
-                if fecha_fin_emp and isinstance(fecha_fin_emp, date) and fecha_fin_emp < date.today():
-                    estado_emp = "inactivo"
+            for idx, fila in enumerate(filas, start=1):
+                # fila: id, identidad, nombre, tipo_contrato, dependencia, cargo, fecha_inicio, fecha_finalizacion, sueldo, estado
+                tree_id = self.tree.insert("", "end", values=(idx, *fila))
+            
+                # Colorear según estado
+                estado = fila[-1]  # último campo: estado
+                if estado.lower() == "activo":
+                    self.tree.item(tree_id, tags=("activo",))
+                elif estado.lower() == "inactivo":
+                    self.tree.item(tree_id, tags=("inactivo",))
                 else:
-                    estado_emp = "activo"
+                    self.tree.item(tree_id, tags=())
 
-            # Asignar color según estado
-            if estado_emp == "activo":
-                self.tree.item(item_id, tags=("activo",))
-                activos += 1
-            elif estado_emp in ("inactivo", "baja", "despedido"):
-                self.tree.item(item_id, tags=("inactivo",))
-                inactivos += 1
-            elif estado_emp == "pendiente":
-                self.tree.item(item_id, tags=("pendiente",))
-            else:
-                self.tree.item(item_id, tags=("otros",))
+            # Definir estilos de tags
+            self.tree.tag_configure("activo", background="#d4efdf")   # verde claro
+            self.tree.tag_configure("inactivo", background="#f5b7b1") # rojo claro
 
-        # ---- Configurar colores ----
-        self.tree.tag_configure("activo", background="#ccffcc")      # verde claro
-        self.tree.tag_configure("inactivo", background="#ffcccc")    # rojo claro
-        self.tree.tag_configure("pendiente", background="#d9d9d9")   # gris claro
-        self.tree.tag_configure("otros", background="#ffffff")       # blanco
+            # Actualizar contador de registros
+            self.count_label.config(text=f"Registros: {len(filas)}")
 
-        # ---- Actualizar contador ----
-        self.count_label.configure(
-            text=f"Registros: {len(filtrados)} | Activos: {activos} | Inactivos: {inactivos}"
-        )
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo cargar la tabla:\n{e}")
 
     def mostrar_ficha(self, event):
         """Muestra ventana flotante con ficha editable del colaborador (doble click)."""
@@ -529,10 +551,16 @@ class ColaboradorWindow:
         cur = conn.cursor()
         cur.execute("""
             SELECT identidad, nombre1, nombre2, apellido1, apellido2, telefono, direccion,
-                   tipo_contrato, dependencia, cargo, fecha_inicio, fecha_finalizacion, sueldo, foto_path
+                tipo_contrato, dependencia, cargo, fecha_inicio, fecha_finalizacion, sueldo, foto_path,
+                cv_path, contrato_path, id_path, solvencia_path
             FROM colaborador WHERE id = %s
         """, (emp_id,))
         fila = cur.fetchone()
+
+        cv_path = fila[14]
+        contrato_path = fila[15]
+        id_path = fila[16]
+        solvencia_path = fila[17]
 
         # Cargar listas desde BD
         def obtener_lista(tabla):
@@ -565,7 +593,21 @@ class ColaboradorWindow:
 
         # --- Estructura general ---
         main_frame = tk.Frame(top, bg="#ffffff", bd=2, relief="flat")
-        main_frame.pack(fill="both", expand=True, padx=25, pady=25)
+        main_frame.pack(fill="both", expand=True, padx=25, pady=10)
+
+        # --- Logo municipal (muni.jpg) ---
+        try:
+            logo_img = Image.open("muni.jpg")
+            logo_img = logo_img.resize((80, 80))  # MÁS pequeño aún
+            logo_tk = ImageTk.PhotoImage(logo_img)
+
+            lbl_logo = tk.Label(top, image=logo_tk, bg="#ecf0f1")
+            lbl_logo.image = logo_tk
+
+            # BAJADO 2 FILAS (y más abajo)
+            lbl_logo.place(x=720, y=120)  
+        except Exception as e:
+            print("Error cargando logo:", e)
 
         # --- Sección izquierda (Foto) ---
         foto_frame = tk.Frame(main_frame, bg="#ffffff")
@@ -573,6 +615,14 @@ class ColaboradorWindow:
 
         tk.Label(foto_frame, text="Foto del colaborador", bg="#ffffff",
                  fg="#2c3e50", font=("Segoe UI", 12, "bold")).pack(pady=(0, 10))
+
+        def cambiar_documento(var_ruta):
+            ruta = filedialog.askopenfilename(
+                title="Seleccionar archivo",
+                filetypes=[("Todos los archivos", "*.*")]
+            )
+            if ruta:
+                var_ruta.set(ruta)
 
         # Cargar foto
         def cargar_foto(ruta):
@@ -587,6 +637,15 @@ class ColaboradorWindow:
         lbl_foto = tk.Label(foto_frame, image=img_actual, bg="#bdc3c7", width=180, height=200)
         lbl_foto.image = img_actual
         lbl_foto.pack(pady=(0, 10))
+
+        def abrir_archivo(ruta):
+            if ruta and os.path.exists(ruta):
+                try:
+                    subprocess.Popen(ruta, shell=True)
+                except Exception as e:
+                    messagebox.showerror("Error", f"No se pudo abrir el archivo:\n{e}")
+            else:
+                messagebox.showwarning("Aviso", "Archivo no disponible.")
 
         def cambiar_foto():
             ruta = filedialog.askopenfilename(
@@ -653,6 +712,35 @@ class ColaboradorWindow:
         ttk.Entry(data_frame, textvariable=sueldo_var, width=30).grid(row=fila, column=1, pady=4)
         fila += 1
 
+        # --- Documentos Adjuntos ---
+        adjuntos = [
+            ("CV:", cv_path),
+            ("Contrato:", contrato_path),
+            ("ID:", id_path),
+            ("Solvencia:", solvencia_path)
+        ]
+
+        fila_doc = fila  # continuar fila del último entry
+        adj_vars = {}  # diccionario para guardar las rutas actualizadas
+
+        for label_text, ruta in adjuntos:
+            var = tk.StringVar(value=ruta)
+            adj_vars[label_text] = var
+            tk.Label(data_frame, text=label_text, bg="#ffffff", fg="#2c3e50",
+                    font=("Segoe UI", 10, "bold")).grid(row=fila_doc, column=0, sticky="e", pady=4, padx=5)
+            entry = ttk.Entry(data_frame, textvariable=var, width=30)
+            entry.grid(row=fila_doc, column=1, pady=4, padx=5)
+    
+            frame_btns = tk.Frame(data_frame, bg="#ffffff")
+            frame_btns.grid(row=fila_doc, column=2, pady=4, padx=5)
+
+            tk.Button(frame_btns, text="Abrir", bg="#3498db", fg="white", font=("Segoe UI", 9, "bold"),
+                      relief="flat", command=lambda r=var: abrir_archivo(r.get())).pack(side="left", padx=2)
+            tk.Button(frame_btns, text="Cambiar", bg="#1abc9c", fg="white", font=("Segoe UI", 9, "bold"),
+                      relief="flat",
+                      command=lambda r=var: cambiar_documento(r)).pack(side="left", padx=2)
+            fila_doc += 1
+
         # --- Botones inferiores ---
         btn_frame = tk.Frame(top, bg="#ecf0f1")
         btn_frame.pack(fill="x", pady=15)
@@ -665,13 +753,19 @@ class ColaboradorWindow:
                     UPDATE colaborador
                     SET identidad=%s, nombre1=%s, nombre2=%s, apellido1=%s, apellido2=%s,
                         telefono=%s, direccion=%s, tipo_contrato=%s, dependencia=%s,
-                        cargo=%s, fecha_inicio=%s, fecha_finalizacion=%s, sueldo=%s, foto_path=%s
+                        cargo=%s, fecha_inicio=%s, fecha_finalizacion=%s, sueldo=%s, foto_path=%s,
+                        cv_path=%s, contrato_path=%s, id_path=%s, solvencia_path=%s
                     WHERE id=%s
                 """, (
                     identidad_var.get(), nombre1_var.get(), nombre2_var.get(), apellido1_var.get(), apellido2_var.get(),
                     telefono_var.get(), direccion_var.get(), tipo_contrato_var.get(), dependencia_var.get(),
                     cargo_var.get(), fecha_inicio_var.get(), fecha_finalizacion_var.get(), sueldo_var.get(),
-                    foto_path, emp_id
+                    foto_path,
+                    adj_vars["CV:"].get(),
+                    adj_vars["Contrato:"].get(),
+                    adj_vars["ID:"].get(),
+                    adj_vars["Solvencia:"].get(),
+                    emp_id
                 ))
                 conn.commit()
                 conn.close()
@@ -681,12 +775,26 @@ class ColaboradorWindow:
             except Exception as e:
                 messagebox.showerror("Error", f"No se pudo actualizar el colaborador:\n{e}")
 
-        tk.Button(btn_frame, text="💾 Actualizar", bg="#1abc9c", fg="white",
-                  font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2",
-                  command=actualizar_datos).pack(side="left", expand=True, fill="x", padx=60, ipadx=5, ipady=5)
-        tk.Button(btn_frame, text="❌ Cerrar", bg="#e74c3c", fg="white",
-                  font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2",
-                  command=top.destroy).pack(side="left", expand=True, fill="x", padx=60, ipadx=5, ipady=5)
+        # --- Botones inferiores ---
+        btn_frame = tk.Frame(main_frame, bg="#ffffff")
+        btn_frame.pack(fill="x", pady=10)
+
+        btn_actualizar = tk.Button(
+            top, text="💾 Actualizar", bg="#1abc9c", fg="white",
+            font=("Segoe UI", 10, "bold"), width=12, height=1, relief="flat",
+            #cursor="hand2",
+            command=actualizar_datos
+        )
+        btn_actualizar.pack(fill="x", pady=5)
+        btn_actualizar.place(x=720, y=150)
+
+        btn_cerrar = tk.Button(
+            top, text="❌ Cerrar", bg="#e74c3c", fg="white",
+            font=("Segoe UI", 10, "bold"), width=12, height=1, relief="flat",
+            command=top.destroy
+        )
+        btn_cerrar.pack(fill="x", pady=5)
+        btn_cerrar.place(x=720, y=190)
 
     # ---- Limpiar filtros ---- #
     def limpiar(self):

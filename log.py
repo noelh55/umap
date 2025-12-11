@@ -20,26 +20,66 @@ DB_CONFIG = {
 }
 
 # ---------------- FUNCIONES ----------------
-def toast(root, text):
+def toast(root, text, duration=2500):
+    """Toast flotante en la esquina superior derecha con animación slide-in"""
     toast_win = tk.Toplevel(root)
-    self.root.update_idletasks()
-    x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 210
-    y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 190
-    win.geometry(f"420x380+{x}+{y}")
     toast_win.overrideredirect(True)
-    toast_win.configure(bg="#333333")
     toast_win.attributes("-topmost", True)
-    toast_label = tk.Label(toast_win, text=text, fg="white", bg="#333333", font=("Segoe UI", 11, "bold"))
-    toast_label.pack(ipadx=10, ipady=5)
-    x = root.winfo_x() + root.winfo_width() // 2 - 100
-    y = root.winfo_y() + root.winfo_height() // 2 - 50
-    toast_win.geometry(f"200x50+{x}+{y}")
-    toast_win.after(2000, toast_win.destroy)
-    x = self.card_frame.winfo_rootx()
-    y = self.card_frame.winfo_rooty()
-    w = self.card_frame.winfo_width()
-    h = self.card_frame.winfo_height()
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    toast_win.configure(bg="#e74c3c")  # fondo rojo
+
+    # Crear etiqueta
+    toast_label = tk.Label(
+        toast_win,
+        text=text,
+        fg="white",
+        bg="#e74c3c",
+        font=("Segoe UI", 11, "bold"),
+        anchor="w"
+    )
+    toast_label.pack(ipadx=20, ipady=10, fill="both")
+
+    # Posición inicial: fuera de la pantalla (derecha)
+    root.update_idletasks()
+    toast_width = 300
+    toast_height = 60
+    screen_x = root.winfo_x() + root.winfo_width() - toast_width - 10
+    screen_y = root.winfo_y() + 10
+    start_x = root.winfo_x() + root.winfo_width() + toast_width  # fuera a la derecha
+
+    toast_win.geometry(f"{toast_width}x{toast_height}+{start_x}+{screen_y}")
+    toast_win.attributes("-alpha", 0.0)
+
+    # Animación slide-in
+    alpha = 0.0
+    step_alpha = 0.08
+    step_x = 20
+
+    def slide_in():
+        nonlocal start_x, alpha
+        alpha += step_alpha
+        start_x -= step_x
+        if alpha > 1.0: alpha = 1.0
+        if start_x <= screen_x:
+            toast_win.geometry(f"{toast_width}x{toast_height}+{screen_x}+{screen_y}")
+            toast_win.attributes("-alpha", 1.0)
+            root.after(duration, slide_out)
+        else:
+            toast_win.geometry(f"{toast_width}x{toast_height}+{start_x}+{screen_y}")
+            toast_win.attributes("-alpha", alpha)
+            root.after(30, slide_in)
+
+    def slide_out():
+        nonlocal start_x, alpha
+        start_x += step_x
+        alpha -= step_alpha
+        if alpha <= 0:
+            toast_win.destroy()
+        else:
+            toast_win.geometry(f"{toast_width}x{toast_height}+{start_x}+{screen_y}")
+            toast_win.attributes("-alpha", alpha)
+            root.after(30, slide_out)
+
+    slide_in()
 
 # ---------------- LOGIN APP ----------------
 class LoginApp:
@@ -149,11 +189,6 @@ class LoginApp:
         self.salir_label.place(relx=0.5, y=415, anchor="center")
         self.salir_label.bind("<Button-1>", lambda e: self.root.destroy())
 
-        # --- BOTÓN: Registrar Colaborador ---
-        self.reg_col_btn = tk.Button(self.card_frame, text="Registrar Colaborador", bg="#2d9cdb", fg="white",
-                                     font=("Segoe UI", 10, "bold"), relief="flat", command=self.abrir_registro_colaborador)
-        self.reg_col_btn.place(relx=0.5, y=320, anchor="center")
-
         self.root.bind("<Escape>", lambda e: root.destroy())
         self._fade_in_alpha = 0.0
         self._do_fade_in()
@@ -164,7 +199,6 @@ class LoginApp:
             except:
                 pass
             os.remove("logout_flag.txt")
-
 
     # ---------------- fade-in ----------------
     def _do_fade_in(self):
@@ -341,7 +375,12 @@ class LoginApp:
             conn.close()
 
             if not user:
+                # Mostrar mensaje en label (rojo)
                 self.mostrar_mensaje("❌ Usuario no encontrado")
+    
+                # Mostrar toast flotante bonito
+                toast(self.root, "Usuario no encontrado")
+    
                 return
 
             db_usuario, db_contrasena, nombre, rol, foto_path = user
@@ -362,126 +401,9 @@ class LoginApp:
         except Exception as e:
             self.mostrar_mensaje(f"Error de conexión: {e}")
 
-    # ----------------- REGISTRO COLABORADOR -----------------
-    def abrir_registro_colaborador(self):
-        win = tk.Toplevel(self.root)
-        win.title("Registrar Colaborador")
-        win.geometry("420x380")
-        win.attributes("-alpha", 0.0)
-        def fade():
-            a = win.attributes("-alpha")
-            if a < 1:
-                win.attributes("-alpha", a + 0.08)
-                win.after(20, fade)
-        fade()
-
-        win.transient(self.root)
-        win.grab_set()
-        win.resizable(False, False)
-
-        frame = tk.Frame(win, padx=12, pady=12)
-        frame.pack(fill="both", expand=True)
-
-        tk.Label(frame, text="Registrar Colaborador", font=("Segoe UI", 14, "bold")).pack(pady=(0,8))
-
-        usuario_e = tk.Entry(frame, font=("Segoe UI", 11))
-        def ph_clear(e, t):
-            if e.get() == t:
-                e.delete(0, tk.END)
-
-        def ph_restore(e, t):
-            if e.get().strip() == "":
-                e.insert(0, t)
-
-        usuario_e.insert(0, "usuario")
-        usuario_e.bind("<FocusIn>", lambda e: ph_clear(usuario_e,"usuario"))
-        usuario_e.bind("<FocusOut>", lambda e: ph_restore(usuario_e,"usuario"))
-        usuario_e.pack(fill="x", pady=6)
-
-        contrasena_e = tk.Entry(frame, font=("Segoe UI", 11))
-        contrasena_e.insert(0, "contrasena")
-        contrasena_e.bind("<FocusIn>", lambda e: ph_clear(contrasena_e,"contrasena"))
-        contrasena_e.bind("<FocusOut>", lambda e: ph_restore(contrasena_e,"contrasena"))
-        contrasena_e.pack(fill="x", pady=6)
-
-        nombre1_e = tk.Entry(frame, font=("Segoe UI", 11))
-        nombre1_e.insert(0, "nombre1")
-        nombre1_e.bind("<FocusIn>", lambda e: ph_clear(nombre1_e,"nombre1"))
-        nombre1_e.bind("<FocusOut>", lambda e: ph_restore(nombre1_e,"nombre1"))
-        nombre1_e.pack(fill="x", pady=6)
-
-        nombre2_e = tk.Entry(frame, font=("Segoe UI", 11))
-        nombre2_e.insert(0, "nombre2")
-        nombre2_e.bind("<FocusIn>", lambda e: ph_clear(nombre2_e,"nombre2"))
-        nombre2_e.bind("<FocusOut>", lambda e: ph_restore(nombre2_e,"nombre2"))
-        nombre2_e.pack(fill="x", pady=6)
-
-        apellido1_e = tk.Entry(frame, font=("Segoe UI", 11))
-        apellido1_e.insert(0, "apellido1")
-        apellido1_e.bind("<FocusIn>", lambda e: ph_clear(apellido1_e,"apellido1"))
-        apellido1_e.bind("<FocusOut>", lambda e: ph_restore(apellido1_e,"apellido1"))
-        apellido1_e.pack(fill="x", pady=6)
-
-        apellido2_e = tk.Entry(frame, font=("Segoe UI", 11))
-        apellido2_e.insert(0, "apellido2")
-        apellido2_e.bind("<FocusIn>", lambda e: ph_clear(apellido2_e,"apellido2"))
-        apellido2_e.bind("<FocusOut>", lambda e: ph_restore(apellido2_e,"apellido2"))
-        apellido2_e.pack(fill="x", pady=6)
-
-        rol_cb = ttk.Combobox(frame, values=["Usuario", "Administrador"], state="readonly")
-        rol_cb.current(0)
-        rol_cb.pack(fill="x", pady=6)
-
-        def registrar():
-            usuario = usuario_e.get().strip()
-            contr = contrasena_e.get().strip()
-            nombre1 = nombre1_e.get().strip()
-            nombre2 = nombre2_e.get().strip()
-            apellido1 = apellido1_e.get().strip()
-            apellido2 = apellido2_e.get().strip()
-            rol = rol_cb.get().strip()
-
-            placeholders = ["usuario", "contrasena", "nombre1", "nombre2", "apellido1", "apellido2"]
-            if usuario in placeholders or contr in placeholders or nombre1 in placeholders or apellido1 in placeholders:
-                messagebox.showerror("Error","No puedes dejar valores por defecto.")
-                return
-
-            if not usuario or not contr or not nombre1 or not apellido1:
-                messagebox.showwarning("Atención", "Complete los campos obligatorios (usuario, contrasena, nombre1, apellido1).")
-                return
-
-            try:
-                conn = psycopg2.connect(**DB_CONFIG)
-                cur = conn.cursor()
-                cur.execute("SELECT 1 FROM usuarios WHERE usuario = %s", (usuario,))
-                if cur.fetchone():
-                    messagebox.showerror("Error", "Ya existe un usuario con ese nombre en tabla usuarios.")
-                    conn.close()
-                    return
-                cur.execute("SELECT 1 FROM colaborador WHERE usuario = %s", (usuario,))
-                if cur.fetchone():
-                    messagebox.showerror("Error", "Ya existe un colaborador con ese usuario.")
-                    conn.close()
-                    return
-
-                cur.execute("""
-                    INSERT INTO colaborador (usuario, contrasena, nombre1, nombre2, apellido1, apellido2, rol)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (usuario, contr, nombre1, nombre2, apellido1, apellido2, rol))
-                conn.commit()
-                conn.close()
-                toast(self.root, "Colaborador registrado con éxito")
-                win.destroy()
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudo registrar:\n{e}")
-
-        # Botones (solo una vez)
-        tk.Button(frame, text="Registrar", bg="#27ae60", fg="white", command=registrar).pack(pady=10)
-        tk.Button(frame, text="Cancelar", command=win.destroy).pack()
-
     def mostrar_mensaje(self, msg):
         self.msg_label.config(text=msg)
-        self.card_frame.after(2000, lambda: self.msg_label.config(text=""))
+        self.msg_label.after(3000, lambda: self.msg_label.config(text=""))
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":

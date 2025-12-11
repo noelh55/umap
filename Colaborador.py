@@ -12,6 +12,10 @@ from tkcalendar import DateEntry
 from PIL import Image, ImageTk
 from datetime import datetime, timedelta
 import tkinter.messagebox as messagebox
+import webbrowser      # para abrir archivos
+import platform        # para detectar el SO y abrir archivos localmente
+import shutil          # para copiar/descargar archivos
+import re
 
 # ------ CONFIGURACIÓN BASE DE DATOS -----
 DB_CONFIG = {
@@ -99,6 +103,7 @@ def init_db():
             solvencia_path TEXT
         )
     """)
+
     conn.commit()
     conn.close()
 
@@ -196,12 +201,39 @@ def guardar_empleado(
 class App:
     def __init__(self, root, usuario_actual=None):
         style = ttk.Style()
+        style.theme_use("clam")
+
+        # Estilos generales
         style.configure("TLabel", font=("Segoe UI", 11))
         style.configure("TEntry", font=("Segoe UI", 11))
         style.configure("TButton", font=("Segoe UI", 11), padding=6)
-        style.configure("Folder.TButton", font=("Segoe UI", 11), padding=8)
-        style.configure("Success.TButton", background="#4CAF50", foreground="white")
 
+        # Botones "folder" / generales de documentos: gris inicial
+        style.configure(
+            "Folder.TButton",
+            font=("Segoe UI", 11),
+            padding=8,
+            foreground="black",
+            background="#757575"  # gris
+        )
+        style.map(
+            "Folder.TButton",
+            foreground=[('active', 'black')],
+            background=[('active', '#a0a0a0'), ('!active', '#757575')]
+        )
+
+        # Botones de estado "success" (verde)
+        style.configure(
+            "Success.TButton",
+            font=("Segoe UI", 12, "bold"),
+            foreground="white",
+            background="#4CAF50"
+        )
+        style.map(
+            "Success.TButton",
+            foreground=[('active', 'white')],
+            background=[('active', '#45a049'), ('!active', '#4CAF50')]
+        )
         self.root = root
         self.usuario_actual = usuario_actual
         root.title("UMAP - Crear Colaborador")
@@ -244,20 +276,31 @@ class App:
 
         # estilos específicos
         style.configure(
-            "Folder.TButton",  # botones de documentos en verde, más anchos y menos altos
+            "DocGray.TButton",
             font=("Segoe UI", 12, "bold"),
             foreground="white",
-            background="#2E7D32",
-            padding=(10, 6),
-            borderwidth=0
+            background="#757575",  # gris
+            padding=(12, 10),
+            relief="flat"
         )
         style.configure(
             "Main.Small.TButton",  # botones principales un poco más pequeños
             font=("Segoe UI", 10, "bold"),
             foreground="white",
-            background="#1976D2",
+            background="#b0b0b0",
             padding=(6, 6)
         )
+
+        style.map(
+            "Main.Small.TButton",
+            foreground=[('active', 'white')],
+            background=[('active', '#1976D2'), ('!active', '#b0b0b0')]
+        )
+
+        style.configure("Success.TButton", font=("Segoe UI", 12, "bold"), foreground="white")
+        style.map("Success.TButton",
+                  foreground=[('active', 'white')],
+                  background=[('active', '#45a049'), ('!active', '#4CAF50')])
 
         # Título centrado
         ttk.Label(root, text="Registro de Nuevo Colaborador", font=("Segoe UI", 14, "bold"), background="#f4f6f9").pack(pady=10)
@@ -453,22 +496,25 @@ class App:
             docs.grid_columnconfigure(c, weight=1)
         docs.grid_rowconfigure(0, weight=1)
 
-        # Botones tipo "documento": más largos pero altura reducida para caber en pantalla
-        # compound="top" deja el emoji encima del texto, reforzando la apariencia de tarjeta
-        self.btn_cv = ttk.Button(docs, text="CV\n(Adjuntar)", style="Doc.TButton", command=self.select_cv, compound="top")
-        self.btn_cv.grid(row=0, column=0, padx=8, pady=8, ipadx=100, ipady=28)
+        # --- Botones de documentos ---
+        self.btn_cv = ttk.Button(docs, text="CV\n(Adjuntar)", style="DocGray.TButton",
+                                command=lambda: self.manejar_documento('cv'), compound="top")
+        docs.grid_rowconfigure(0, weight=1)
         self.btn_cv.grid(row=0, column=0, padx=8, pady=8, ipadx=100, ipady=18)
 
-        self.btn_contrato = ttk.Button(docs, text="Contrato\n(Adjuntar)", style="Doc.TButton", command=self.select_contrato, compound="top")
-        self.btn_contrato.grid(row=0, column=1, padx=8, pady=8, ipadx=100, ipady=28)
+        self.btn_contrato = ttk.Button(docs, text="Contrato\n(Adjuntar)", style="DocGray.TButton",
+                                command=lambda: self.manejar_documento('contrato'), compound="top")
+        docs.grid_rowconfigure(0, weight=1)
         self.btn_contrato.grid(row=0, column=1, padx=8, pady=8, ipadx=100, ipady=18)
 
-        self.btn_id = ttk.Button(docs, text="Identidad\n(Adjuntar)", style="Doc.TButton", command=self.select_identidad, compound="top")
-        self.btn_id.grid(row=0, column=2, padx=8, pady=8, ipadx=100, ipady=28)
+        self.btn_id = ttk.Button(docs, text="Identidad\n(Adjuntar)", style="DocGray.TButton",
+                                command=lambda: self.manejar_documento('id'), compound="top")
+        docs.grid_rowconfigure(0, weight=1)
         self.btn_id.grid(row=0, column=2, padx=8, pady=8, ipadx=100, ipady=18)
 
-        self.btn_solvencia = ttk.Button(docs, text="Solvencia\n(Adjuntar)", style="Doc.TButton", command=self.select_solvencia, compound="top")
-        self.btn_solvencia.grid(row=0, column=3, padx=8, pady=8, ipadx=100, ipady=28)
+        self.btn_solvencia = ttk.Button(docs, text="Solvencia\n(Adjuntar)", style="DocGray.TButton",
+                                command=lambda: self.manejar_documento('solvencia'), compound="top")
+        docs.grid_rowconfigure(0, weight=1)
         self.btn_solvencia.grid(row=0, column=3, padx=8, pady=8, ipadx=100, ipady=18)
 
         # Etiquetas de confirmación debajo de los botones (compactas)
@@ -550,6 +596,16 @@ class App:
             
         except Exception as e:
             messagebox.showerror("Error al verificar contratos", str(e))
+    
+    def mostrar_menu_documento(self, boton, path):
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Abrir", command=lambda: self.abrir_archivo(path))
+        menu.add_command(label="Descargar / Guardar como...", command=lambda: self.descargar_archivo(path))
+        menu.add_command(label="Ver", command=lambda: self.abrir_archivo(path))  # ver = abrir
+        # Mostrar el menú donde esté el botón
+        x = boton.winfo_rootx()
+        y = boton.winfo_rooty() + boton.winfo_height()
+        menu.tk_popup(x, y)
 
     # --- Funciones de interfaz ---
     def buscar_colaborador_por_identidad(self, event=None):
@@ -656,15 +712,10 @@ class App:
     def validar_identidad(self, P):
         if P == "":
             return True
-        if len(P) > 15:
-            return False
-        # caracteres permitidos
-        if not re.match(r'^[0-9 \-]*$', P):
-            return False
-        # no más de 2 espacios ni más de 2 guiones
-        if P.count(' ') > 2 or P.count('-') > 2:
-            return False
-        return True
+        # permitir escritura parcial (solo dígitos y guiones)
+        if re.fullmatch(r'[\d\- ]*', P):
+            return True
+        return False
     
     def validar_telefono(self, P):
         if P == "":
@@ -684,6 +735,34 @@ class App:
             return True
         # sólo letras y espacios
         return bool(re.match(r'^[A-Za-zÁÉÍÓÚÜáéíóúüÑñ ]*$', P))
+    
+    def normalizar_sueldo(self, valor):
+        """
+        Convierte un sueldo como 1,500 o 1.500,00 a decimal estándar para PostgreSQL
+        """
+        if not valor:
+            return None
+
+        # quitar espacios
+        valor = valor.strip()
+
+        # si usa coma como decimal: 1.500,00 -> 1500.00
+        if "," in valor and "." in valor:
+            valor = valor.replace(".", "").replace(",", ".")
+
+        # si solo usa coma: 1500,50 -> 1500.50
+        elif "," in valor:
+            valor = valor.replace(",", ".")
+
+        # quitar separadores de miles
+        valor = valor.replace(",", "").replace(" ", "")
+
+        try:
+            return float(valor)
+        except:
+            messagebox.showwarning("Error de formato",
+                                   "Formato de sueldo incorrecto.")
+            return None
 
     def tipo_cambio(self, event=None):
         tipo = self.tipo_contrato.get()
@@ -727,7 +806,7 @@ class App:
         """
         try:
             fi = self.fecha_inicio.get_date()
-            ff = self.fecha_fin.get_date()
+            ff = self.fecha_finalizacion.get_date()  # si el widget se llama diferente colócame su nombre
         except Exception:
             self.anioss.set("")
             self.meses_calc.set("")
@@ -755,6 +834,47 @@ class App:
         else:
             self.anioss.set("")
 
+    def manejar_documento(self, tipo):
+        """
+        tipo: 'cv', 'contrato', 'id', 'solvencia'
+        """
+        attr_src = f"{tipo}_src"
+        boton = getattr(self, f"btn_{tipo}")
+        etiqueta = getattr(self, f"{tipo}_ok")
+
+        current_path = getattr(self, attr_src, None)
+
+        if not current_path:
+            # No hay archivo adjunto: abrir selector
+            path = filedialog.askopenfilename(filetypes=[("PDF", "*.pdf")])
+            if path:
+                setattr(self, attr_src, path)
+                self.marcar_ok(boton, etiqueta)
+        else:
+            # Archivo existe: mostrar menú Abrir / Descargar / Ver
+            self.mostrar_menu_documento(boton, current_path)
+
+    def abrir_archivo(self, path):
+        """
+        Abrir el archivo según el sistema operativo
+        """
+        if platform.system() == "Windows":
+            os.startfile(path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.call(["open", path])
+        else:  # Linux y otros
+            subprocess.call(["xdg-open", path])
+
+    def descargar_archivo(self, path):
+        destino = filedialog.asksaveasfilename(
+            initialfile=os.path.basename(path),
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")]
+        )
+        if destino:
+            shutil.copy2(path, destino)
+            messagebox.showinfo("Descarga completada", f"Archivo guardado en:\n{destino}")
+
     def marcar_ok(self, boton, etiqueta):
         try:
             boton.configure(style="Success.TButton")
@@ -762,7 +882,6 @@ class App:
             if "(Adjuntar)" in txt:
                 boton.configure(text=txt.replace("(Adjuntar)", "(Adjuntado)"))
             else:
-                # si no contiene el marcador esperado, añadir indicación al final
                 if "(Adjuntado)" not in txt:
                     boton.configure(text=txt + "\n(Adjuntado)")
             etiqueta.configure(text="✔️ Adjuntado correctamente")
@@ -836,15 +955,51 @@ class App:
         os.execl(sys.executable, sys.executable, "Main.py")
 
     def guardar(self):
+        identidad_valor = self.identidad.get().strip()
+
+        # --- VALIDAR IDENTIDAD DUPLICADA ---
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+
+        cur.execute("SELECT 1 FROM colaborador WHERE identidad = %s LIMIT 1", (identidad_valor,))
+        existe = cur.fetchone()
+
+        conn.close()
+
+        if existe:
+            messagebox.showwarning(
+                "Identidad duplicada",
+                "❌ Este colaborador ya está registrado en el sistema."
+            )
+            return
+        
+        # --- FOTO POR DEFECTO ---
+        if not self.foto_src:
+            self.foto_src = "uploads/admin.jpg"
+
+
+        # --- NORMALIZAR SUELDO ---
+        sueldo_normalizado = self.normalizar_sueldo(self.sueldo.get())
+        if sueldo_normalizado is None:
+            return  # detener si el sueldo es inválido
+
+        # --- GUARDAR EN BASE DE DATOS ---
         guardar_empleado(
             self.identidad.get(), self.nombre1.get(), self.nombre2.get(),
-            self.apellido1.get(), self.apellido2.get(), self.telefono.get(), self.profesion.get(),
-            self.tipo_contrato.get(), self.direccion.get(), self.dependencia.get(), self.cargo.get(),
-            self.usuario.get(), self.contrasena.get(), self.confirmacion_contrasena.get(), self.rol.get(), self.unidad.get(),
-            self.cv_src, self.fecha_inicio.get_date(), self.fecha_fin.get_date(),
-            self.contrato_src, self.solvencia_src, self.id_src, self.foto_src,
-            self.sueldo.get(), self.anioss.get(), self.diasg.get(), self.fecha_nac_entry.get_date()
+            self.apellido1.get(), self.apellido2.get(), self.telefono.get(),
+            self.profesion.get(), self.tipo_contrato.get(), self.direccion.get(),
+            self.dependencia.get(), self.cargo.get(), self.usuario.get(),
+            self.contrasena.get(), self.confirmacion_contrasena.get(),
+            self.rol.get(), self.unidad.get(), self.cv_src,
+            self.fecha_inicio.get_date(), self.fecha_fin.get_date(),
+            self.contrato_src, self.solvencia_src, self.id_src,
+            self.foto_src, sueldo_normalizado, self.anioss.get(),
+            self.diasg.get(), self.fecha_nac_entry.get_date()
         )
+
+        # --- MENSAJE Y LIMPIEZA ---
+        messagebox.showinfo("Éxito", "Colaborador registrado correctamente.")
+        self.limpiar()
 
     # --- Indicadores visuales ---
     def marcar_ok(self, boton, etiqueta):
